@@ -24,7 +24,7 @@ import pytest
 playwright = pytest.importorskip("playwright.sync_api")
 
 CHROMIUM = os.environ.get("LOT_BOT_BROWSER_EXECUTABLE") or next(
-    (str(p) for p in sorted(Path("/opt/pw-browsers").glob("chromium-*/chrome-linux/chrome"))), ""
+    (str(p) for p in sorted(Path("/opt/pw-browsers").glob("chromium-*/chrome-linux*/chrome"))), ""
 )
 pytestmark = [
     pytest.mark.skipif(not CHROMIUM, reason="No hay Chromium para la prueba real."),

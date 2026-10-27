@@ -275,3 +275,42 @@ def test_anuncio_principal_guarda_la_marca_y_la_publica(qapp, app_with_data, mon
 
     servicio.site = load_site_config()
     assert servicio.listing_data(borrador).attributes.get("marca") == "Pikolin"
+
+
+def test_anuncio_principal_elige_si_el_envio_va_activado(qapp, app_with_data, monkeypatch):
+    """«Envío» en Anuncio principal: marcado = «Activar envío» en Wallapop;
+    desmarcado (por defecto) = sin envío. Se guarda y llega al navegador."""
+    from lot_bot.ui.views import master_ad as pantalla
+    from lot_bot.wallapop.browser import load_site_config
+    from lot_bot.wallapop.browser.service import BrowserWallapopService
+    from lot_bot.wallapop.dto import ItemDraft
+
+    monkeypatch.setattr(pantalla, "ask_confirmation", lambda *a, **k: True)
+    monkeypatch.setattr(pantalla, "info_box", lambda *a, **k: None)
+    servicio = BrowserWallapopService.__new__(BrowserWallapopService)
+    servicio.site = load_site_config()
+
+    def envio_al_publicar():
+        master = app_with_data.master_ads.get(None)
+        datos = app_with_data.master_ads.render(master)
+        borrador = ItemDraft(
+            title=datos["title"], description=datos["description"], price=datos["price"],
+            attributes=datos.get("attributes") or master.attributes, image_paths=[],
+        )
+        return servicio.listing_data(borrador).shipping
+
+    view = pantalla.MasterAdView(app_with_data, _runner())
+    view.refresh()
+    assert not view.shipping_box.isChecked()  # por defecto, sin envío (como hasta ahora)
+    view.shipping_box.setChecked(True)
+    view._save()
+    assert app_with_data.master_ads.get(None).attributes.get("envio") == "sí"
+    otra = pantalla.MasterAdView(app_with_data, _runner())
+    otra.refresh()
+    assert otra.shipping_box.isChecked()  # al volver a abrir sigue marcado
+    assert envio_al_publicar() is True
+    # No es una característica del producto (no sale en la lista de «features»).
+    assert "sí" not in app_with_data.master_ads.get(None).features
+    otra.shipping_box.setChecked(False)
+    otra._save()
+    assert envio_al_publicar() is False

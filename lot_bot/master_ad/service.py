@@ -52,7 +52,7 @@ DEMO_IMAGE_COUNT = 3
 #: Campos que el usuario puede editar en la plantilla.
 #: Datos del Anuncio principal guardados en «attributes» que NO son
 #: características del producto.
-NON_FEATURE_ATTRIBUTES = {"ubicacion", "activo"}
+NON_FEATURE_ATTRIBUTES = {"ubicacion", "activo", "envio"}
 
 EDITABLE_FIELDS = {
     "name",

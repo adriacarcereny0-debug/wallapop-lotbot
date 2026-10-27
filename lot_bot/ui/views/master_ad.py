@@ -148,6 +148,9 @@ class MasterAdView(BaseView):
             "Marca del producto (p. ej. Pikolin). Vacío = el anuncio se publica sin marca"
         )
         self.active_box = QCheckBox("Anuncio activo: el bot lo publica (desmárcalo para pausarlo)")
+        self.shipping_box = QCheckBox(
+            "Envío activado en Wallapop (desmarcado = solo venta en mano, sin envío)"
+        )
         self.location = QLineEdit()
         self.location.setPlaceholderText("Ciudad donde se publica, p. ej. Barcelona, Madrid, Valencia…")
         self.locked_box = QCheckBox(
@@ -192,6 +195,7 @@ class MasterAdView(BaseView):
         form.addRow("Material", self.attr_material)
         form.addRow("Marca", self.attr_brand)
         form.addRow("Ubicación", self.location)
+        form.addRow("Envío", self.shipping_box)
         form.addRow("", self.active_box)
         form.addRow("Categoría", self.category)
         form.addRow("Subcategoría", self.subcategory)
@@ -288,6 +292,7 @@ class MasterAdView(BaseView):
         self.attr_brand.setText(str(master.attributes.get("marca") or ""))
         self.location.setText(str(master.attributes.get("ubicacion") or ""))
         self.active_box.setChecked(str(master.attributes.get("activo") or "sí") != "no")
+        self.shipping_box.setChecked(str(master.attributes.get("envio") or "no") == "sí")
         self.locked_box.setChecked(master.locked)
         self.price.setValue(master.price or 0)
         self.condition.setCurrentText(master.condition or "")
@@ -396,6 +401,7 @@ class MasterAdView(BaseView):
                 "marca": self.attr_brand.text().strip(),
                 "ubicacion": self.location.text().strip(),
                 "activo": "sí" if self.active_box.isChecked() else "no",
+                "envio": "sí" if self.shipping_box.isChecked() else "no",
             },
             "locked": self.locked_box.isChecked(),
             "price": self.price.value() or None,

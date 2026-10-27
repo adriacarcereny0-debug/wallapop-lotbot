@@ -18,7 +18,7 @@ from lot_bot.wallapop.dto import ItemDraft
 playwright = pytest.importorskip("playwright.sync_api")
 
 CHROMIUM = os.environ.get("LOT_BOT_BROWSER_EXECUTABLE") or next(
-    (str(p) for p in sorted(Path("/opt/pw-browsers").glob("chromium-*/chrome-linux/chrome"))), ""
+    (str(p) for p in sorted(Path("/opt/pw-browsers").glob("chromium-*/chrome-linux*/chrome"))), ""
 )
 pytestmark = pytest.mark.skipif(not CHROMIUM, reason="No hay Chromium para la prueba real.")
 
@@ -251,6 +251,19 @@ def test_navegador_real_categoria_escrita_en_plural_como_en_tu_plantilla(servici
     resultado = service.create_item("cuenta-1", datos)
     assert resultado.success, resultado.message
     assert web.published[0]["categoria"] == "Estructura de camas"
+
+
+@pytest.mark.parametrize("envio, esperado", [("sí", True), ("no", False), ("", False)])
+def test_navegador_real_envio_como_diga_el_anuncio_principal(servicio, envio, esperado):
+    """«Envío» del Anuncio principal: activado o no en Wallapop (Wallapop lo
+    trae activado; vacío = lo de siempre, sin envío)."""
+    service, web, tmp_path = servicio
+    datos = borrador(tmp_path)
+    datos.attributes = {**datos.attributes, "envio": envio}
+    resultado = service.create_item("cuenta-1", datos)
+    assert resultado.success, resultado.message
+    assert web.published[0]["envio"] is esperado
+    assert not any("Envío" in o for o in resultado.data["omitidos"])
 
 
 def test_navegador_real_si_no_hay_envio_ni_ubicacion_publica_igual_y_avisa(servicio):

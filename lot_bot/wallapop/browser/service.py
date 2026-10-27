@@ -350,6 +350,7 @@ class BrowserWallapopService(WallapopService):
             attributes=attributes,
             images=[str(Path(p)) for p in draft.image_paths if Path(p).is_file()],
             location=str((draft.attributes or {}).get("ubicacion") or ""),
+            shipping=_shipping_choice((draft.attributes or {}).get("envio")),
         )
 
     def _screenshot(self, page: BrowserPage, account_ref: str, step: str) -> str | None:
@@ -687,3 +688,14 @@ class BrowserWallapopService(WallapopService):
 
     def get_market_data(self, account_ref: str, query: str, limit: int = 50) -> list[MarketDataPoint]:
         self._unavailable(Capability.MARKET_DATA)
+
+
+def _shipping_choice(value) -> bool | None:
+    """«envio» del Anuncio principal: «sí» activa el envío, «no» lo quita y
+    vacío deja lo que diga wallapop_browser.yaml (por defecto, sin envío)."""
+    text = str(value or "").strip().lower()
+    if text in ("sí", "si", "true", "1", "activado"):
+        return True
+    if text in ("no", "false", "0", "desactivado"):
+        return False
+    return None

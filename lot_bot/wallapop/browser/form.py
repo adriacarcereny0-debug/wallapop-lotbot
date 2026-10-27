@@ -96,6 +96,8 @@ class ListingData:
     images: list[str] = field(default_factory=list)
     #: Ciudad del Anuncio principal («» = la que ponga Wallapop).
     location: str = ""
+    #: «Activar envío» del Anuncio principal (None = lo que diga el YAML).
+    shipping: bool | None = None
 
 
 @dataclass(slots=True)
@@ -647,7 +649,7 @@ class ListingForm:
         if target is None:
             self.skipped.append("Envío (no aparece el interruptor «Activar envío»)")
             return
-        want = self.form.shipping_enabled
+        want = self.form.shipping_enabled if self.data.shipping is None else self.data.shipping
         label = "Envío " + ("activado" if want else "desactivado")
         if self.page.is_checked(target) == want:
             self.steps.append(label + " (ya estaba)")
