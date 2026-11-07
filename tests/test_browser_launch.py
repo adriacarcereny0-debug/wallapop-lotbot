@@ -251,3 +251,38 @@ def test_redireccion_al_login_no_conecta(profiles, tmp_path):
     assert session.wait_for(session.NOT_LOGGED) == session.NOT_LOGGED
     assert "redirigido" in session.message or "iniciar sesión" in session.message
     session.close()
+
+
+# ---------------------------------------------------------------------------
+# Detección de Chrome / Edge en macOS
+# ---------------------------------------------------------------------------
+def test_detecta_chrome_y_edge_instalados_en_mac():
+    instalados = {
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Users/ana/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    }
+    encontrados = find_browsers(
+        ["chrome", "msedge", "chromium"],
+        platform="darwin",
+        env={"HOME": "/Users/ana"},
+        exists=lambda p: str(p) in instalados,
+    )
+    assert [c.name for c in encontrados] == ["Google Chrome", "Microsoft Edge", "Chromium de Playwright"]
+    assert encontrados[0].executable == "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    assert encontrados[1].executable.startswith("/Users/ana/Applications/")
+
+
+def test_en_mac_sin_chrome_se_prueba_por_canal():
+    encontrados = find_browsers(
+        ["chrome", "msedge"], platform="darwin", env={"HOME": "/Users/ana"}, exists=lambda p: False
+    )
+    assert [(c.name, c.channel) for c in encontrados] == [
+        ("Google Chrome", "chrome"),
+        ("Microsoft Edge", "msedge"),
+    ]
+
+
+def test_en_mac_el_sandbox_siempre_activado():
+    from lot_bot.wallapop.browser.driver import sandbox_enabled
+
+    assert sandbox_enabled("darwin", {"LOT_BOT_BROWSER_SANDBOX": "0"}) is True

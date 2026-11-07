@@ -878,6 +878,21 @@ def windows_browser_paths(env: dict[str, str] | None = None) -> list[tuple[str, 
     return candidates
 
 
+def macos_browser_paths(env: dict[str, str] | None = None) -> list[tuple[str, Path]]:
+    """Rutas habituales de Chrome y Edge en macOS (/Applications y ~/Applications)."""
+    env = env if env is not None else dict(os.environ)
+    home = env.get("HOME") or str(Path.home())
+    roots = ["/Applications", str(Path(home) / "Applications")]
+    candidates: list[tuple[str, Path]] = []
+    for name, relative in (
+        ("Google Chrome", Path("Google Chrome.app/Contents/MacOS/Google Chrome")),
+        ("Microsoft Edge", Path("Microsoft Edge.app/Contents/MacOS/Microsoft Edge")),
+    ):
+        for root in roots:
+            candidates.append((name, Path(root) / relative))
+    return candidates
+
+
 def find_browsers(
     channels: list[str],
     *,
@@ -892,9 +907,14 @@ def find_browsers(
     if explicit:
         return [BrowserCandidate("Navegador indicado", executable=explicit)]
     found: list[BrowserCandidate] = []
+    installed: list[tuple[str, Path]] = []
     if platform.startswith("win"):
+        installed = windows_browser_paths(env)
+    elif platform == "darwin":
+        installed = macos_browser_paths(env)
+    if installed:
         seen: set[str] = set()
-        for name, path in windows_browser_paths(env):
+        for name, path in installed:
             if name not in seen and exists(path):
                 found.append(BrowserCandidate(name, executable=str(path)))
                 seen.add(name)

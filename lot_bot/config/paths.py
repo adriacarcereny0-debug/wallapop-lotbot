@@ -39,7 +39,15 @@ def app_dir() -> Path:
     configurar el programa sin recompilar.
     """
     if is_frozen():
-        return Path(sys.executable).resolve().parent
+        executable = Path(sys.executable).resolve()
+        # macOS: el ejecutable vive en «LOT Bot.app/Contents/MacOS/». La carpeta
+        # «del programa» es la que contiene el .app (p. ej. Aplicaciones), que es
+        # donde el usuario puede dejar su .env.
+        if sys.platform == "darwin" and executable.parent.name == "MacOS":
+            bundle = executable.parents[2]
+            if bundle.suffix == ".app":
+                return bundle.parent
+        return executable.parent
     return Path(__file__).resolve().parents[2]
 
 

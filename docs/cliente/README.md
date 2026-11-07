@@ -8,7 +8,7 @@ cuentas de Wallapop.
 **Guía rápida: [Uso diario de LOT Bot](uso-lot-bot.md)** — todo lo esencial en una página.
 
 
-1. [Cómo instalar LOT Bot](01-como-instalar-lot-bot.md)
+1. [Cómo instalar LOT Bot](01-como-instalar-lot-bot.md) · [en Mac](01b-como-instalar-lot-bot-en-mac.md)
 2. [Cómo conectar Wallapop](02-como-conectar-wallapop.md)
 3. [Cómo añadir una cuenta](03-como-anadir-una-cuenta.md)
 4. [Cómo usar el asistente IA](04-como-usar-el-asistente-ia.md)

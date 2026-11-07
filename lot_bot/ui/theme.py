@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 # --- Paleta «linterna»: grafito y una luz cálida de acento ---
 BG = "#0d0f12"
 BG_ELEVATED = "#111418"
@@ -25,7 +27,16 @@ WARNING = "#f0a13a"
 SUCCESS = "#4cc38a"
 INFO = "#5aa9e6"
 
-FONT_FAMILY = "'Segoe UI Variable Text', 'Segoe UI', 'Inter', 'Helvetica Neue', Arial, sans-serif"
+IS_MAC = sys.platform == "darwin"
+#: Tecla de los atajos tal y como se ve en el teclado: Cmd (⌘) en Mac, Ctrl en Windows.
+MOD_KEY = "⌘" if IS_MAC else "Ctrl"
+#: Donde se arrastran los archivos: el Finder en Mac, el Explorador en Windows.
+FILE_MANAGER = "el Finder" if IS_MAC else "Windows"
+
+FONT_FAMILY = (
+    "'Segoe UI Variable Text', 'Segoe UI', '.AppleSystemUIFont', 'SF Pro Text', "
+    "'Inter', 'Helvetica Neue', Arial, sans-serif"
+)
 
 
 def _asset(name: str) -> str:

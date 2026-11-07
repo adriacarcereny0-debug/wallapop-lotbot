@@ -84,8 +84,8 @@ class ImagesDialog(QDialog):
             "La primera fotografía es la principal. Formatos admitidos: JPG, JPEG, PNG y "
             "WEBP. Las fotos repetidas se descartan solas. Solo se suben a Wallapop las marcadas "
             "con ✓ (botón «Usar / no usar al publicar»).\nPara añadir MUCHAS de golpe: "
-            "«Añadir carpeta completa…», o ARRASTRA las fotos (o la carpeta) desde Windows "
-            "y suéltalas en esta ventana."
+            "«Añadir carpeta completa…», o ARRASTRA las fotos (o la carpeta) desde "
+            f"{theme.FILE_MANAGER} y suéltalas en esta ventana."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {theme.TEXT_MUTED};")
@@ -215,7 +215,7 @@ class ImagesDialog(QDialog):
     def _add(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Selecciona las fotografías (Ctrl+A = todas · Ctrl+clic = varias)",
+            f"Selecciona las fotografías ({theme.MOD_KEY}+A = todas · {theme.MOD_KEY}+clic = varias)",
             "",
             "Imágenes (*.jpg *.jpeg *.png *.webp)",
         )

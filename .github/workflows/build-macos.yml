@@ -1,0 +1,55 @@
+# Genera la app de Mac («LOT Bot.app» dentro de LOT-Bot-macOS.dmg) en los
+# servidores de GitHub, sin necesidad de tener un Mac propio.
+#
+# Cómo descargarla: pestaña «Actions» → «App para Mac» → la última ejecución →
+# apartado «Artifacts» → LOT-Bot-macOS-arm64 (Mac con chip M1/M2/M3/M4) o
+# LOT-Bot-macOS-intel (Mac con procesador Intel).
+name: App para Mac
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main", "claude/**"]
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14   # Apple Silicon
+            arch: arm64
+          - runner: macos-13   # Intel
+            arch: intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compilar LOT Bot.app y el .dmg
+        run: |
+          python3 -m pip install --upgrade pip
+          ./build/build_macos.sh
+
+      - name: Comprobar el contenido de la app
+        run: |
+          test -x "dist/LOT Bot.app/Contents/MacOS/LOT-Bot"
+          plutil -p "dist/LOT Bot.app/Contents/Info.plist"
+
+      - name: Pruebas automáticas (informativas)
+        continue-on-error: true
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          .venv-build/bin/python -m pip install -r requirements-dev.txt --quiet
+          .venv-build/bin/python -m pytest -q
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LOT-Bot-macOS-${{ matrix.arch }}
+          path: dist/LOT-Bot-macOS.dmg
+          if-no-files-found: error

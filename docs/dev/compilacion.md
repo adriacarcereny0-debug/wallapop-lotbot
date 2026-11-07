@@ -96,3 +96,57 @@ Get-ChildItem -Recurse dist\LOT-Bot -Include .env,*.local.yaml,*.key
 | No aparece el icono | Comprueba que existe `lot_bot/resources/lot_bot.ico` |
 | El antivirus lo bloquea | Firma el ejecutable; evita UPX |
 | «No se puede escribir la base de datos» | Los datos van a `%LOCALAPPDATA%`, no junto al `.exe`. Revisa permisos de esa carpeta |
+
+## Generar la app de Mac («LOT Bot.app» + `.dmg`)
+
+La misma receta (`build/LOT-Bot.spec`) genera en macOS una aplicación nativa
+`LOT Bot.app` (con icono `lot_bot/resources/lot_bot.icns`, `Info.plist` en español y
+soporte de modo oscuro / Retina). PyInstaller **no compila de forma cruzada**: la app
+de Mac solo se puede generar en un Mac (o en GitHub Actions).
+
+### Opción A — GitHub Actions (sin Mac)
+
+`.github/workflows/build-macos.yml` compila en los Mac de GitHub en cada push a
+`main` o `claude/**`, en cada etiqueta `v*` o a mano («Run workflow»). Genera dos
+artefactos: `LOT-Bot-macOS-arm64` (chip Apple) y `LOT-Bot-macOS-intel`. Se descargan
+en **Actions → App para Mac → última ejecución → Artifacts**.
+
+### Opción B — En un Mac
+
+```bash
+./build/build_macos.sh                 # o doble clic en compilar_app_mac.command
+./build/build_macos.sh --run-tests     # pasa las pruebas antes
+./build/build_macos.sh --skip-install  # no reinstala dependencias
+```
+
+Resultado: `dist/LOT Bot.app` y `dist/LOT-Bot-macOS.dmg` (con acceso directo a
+Aplicaciones). La app sale para la arquitectura del Mac que compila (arm64 o Intel).
+
+### Firma
+
+Por defecto se firma «ad hoc» (`codesign --sign -`), imprescindible para que abra en
+Mac con chip Apple. El cliente tendrá que abrirla la primera vez con clic derecho →
+Abrir (ver `docs/cliente/01b-como-instalar-lot-bot-en-mac.md`). Para quitar ese aviso
+hace falta una cuenta de Apple Developer:
+
+```bash
+MAC_SIGN_IDENTITY="Developer ID Application: Nombre (EQUIPO)" ./build/build_macos.sh
+xcrun notarytool submit dist/LOT-Bot-macOS.dmg --apple-id ... --team-id ... --wait
+xcrun stapler staple dist/LOT-Bot-macOS.dmg
+```
+
+### Diferencias de comportamiento en macOS
+
+* Navegador: busca `Google Chrome.app` y `Microsoft Edge.app` en `/Applications` y
+  `~/Applications`; si no, prueba los canales de Playwright.
+* Datos: `~/Library/Application Support/LOT Bot/`.
+* `.env`: junto a `LOT Bot.app` o en `~/Library/Application Support/LOT Bot/config/`.
+* Llavero: la clave maestra va al Llavero de macOS (backend `keyring.backends.macOS`).
+
+### iOS (iPhone / iPad)
+
+No hay versión de iOS: LOT Bot es una app de escritorio Qt que publica controlando
+Chrome/Edge con perfiles persistentes (Playwright). iOS no permite lanzar ni
+automatizar otro navegador, ni ejecutar el intérprete de Python embebido con estas
+dependencias, y Apple no aceptaría la app en la App Store. Sería un proyecto aparte
+(p. ej. una app móvil que controle a distancia el LOT Bot del Mac/PC).

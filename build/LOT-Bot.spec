@@ -1,13 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""Receta de PyInstaller para generar LOT-Bot.exe.
+"""Receta de PyInstaller para generar LOT-Bot.exe (Windows) y «LOT Bot.app» (macOS).
 
 Uso:
     pyinstaller build/LOT-Bot.spec --noconfirm --clean
 
-El resultado es `dist/LOT-Bot/LOT-Bot.exe`: el cliente lo ejecuta sin instalar
-Python ni ninguna herramienta de desarrollo.
+Resultado:
+    Windows: `dist/LOT-Bot/LOT-Bot.exe`
+    macOS:   `dist/LOT Bot.app` (build/build_macos.sh lo mete además en un .dmg)
+
+El cliente lo ejecuta sin instalar Python ni ninguna herramienta de desarrollo.
 """
 
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules, copy_metadata
@@ -17,7 +21,17 @@ PROJECT_ROOT = SPEC_DIR.parent
 
 APP_NAME = "LOT-Bot"
 ENTRY_POINT = str(PROJECT_ROOT / "run_lot_bot.py")
-ICON = PROJECT_ROOT / "lot_bot" / "resources" / "lot_bot.ico"
+IS_MAC = sys.platform == "darwin"
+ICON = PROJECT_ROOT / "lot_bot" / "resources" / ("lot_bot.icns" if IS_MAC else "lot_bot.ico")
+MAC_APP_NAME = "LOT Bot.app"
+MAC_BUNDLE_ID = "com.lotbot.desktop"
+
+
+def _app_version() -> str:
+    for line in (PROJECT_ROOT / "lot_bot" / "__init__.py").read_text(encoding="utf-8").splitlines():
+        if line.startswith("__version__"):
+            return line.split("=", 1)[1].strip().strip("\"'")
+    return "1.0.0"
 
 # --- Datos que deben viajar dentro del ejecutable ---
 datas = [
@@ -64,10 +78,6 @@ hiddenimports = [
     "keyring.backends.SecretService",
     "keyring.backends.macOS",
     "keyring.backends.fail",
-    # keyring usa win32ctypes para hablar con el Administrador de credenciales
-    "win32ctypes",
-    "win32ctypes.pywin32",
-    "win32ctypes.pywin32.win32cred",
     # SQLAlchemy carga su dialecto de forma dinamica
     "sqlalchemy.dialects.sqlite",
     # APScheduler resuelve sus planificadores por nombre
@@ -77,6 +87,9 @@ hiddenimports = [
     # Logo e iconos del menú (SVG)
     "PySide6.QtSvg",
 ]
+if sys.platform.startswith("win"):
+    # keyring usa win32ctypes para hablar con el Administrador de credenciales
+    hiddenimports += ["win32ctypes", "win32ctypes.pywin32", "win32ctypes.pywin32.win32cred"]
 hiddenimports += collect_submodules("lot_bot")
 try:
     hiddenimports += collect_submodules("playwright")
@@ -186,7 +199,7 @@ exe = EXE(
     entitlements_file=None,
     icon=str(ICON) if ICON.is_file() else None,
     version=str(SPEC_DIR / "version_info.txt")
-    if (SPEC_DIR / "version_info.txt").is_file()
+    if (SPEC_DIR / "version_info.txt").is_file() and not IS_MAC
     else None,
 )
 
@@ -200,3 +213,35 @@ coll = COLLECT(
     upx_exclude=[],
     name=APP_NAME,
 )
+
+# ---------------------------------------------------------------------------
+# macOS: aplicación «LOT Bot.app» (se abre desde el Launchpad o Aplicaciones)
+# ---------------------------------------------------------------------------
+if IS_MAC:
+    version = _app_version()
+    app = BUNDLE(
+        coll,
+        name=MAC_APP_NAME,
+        icon=str(ICON) if ICON.is_file() else None,
+        bundle_identifier=MAC_BUNDLE_ID,
+        version=version,
+        info_plist={
+            "CFBundleName": "LOT Bot",
+            "CFBundleDisplayName": "LOT Bot",
+            "CFBundleShortVersionString": version,
+            "CFBundleVersion": version,
+            "CFBundleDevelopmentRegion": "es",
+            "LSApplicationCategoryType": "public.app-category.business",
+            "LSMinimumSystemVersion": "11.0",
+            "NSHighResolutionCapable": True,
+            "NSRequiresAquaSystemAppearance": False,
+            # Abrir Chrome/Edge para publicar en Wallapop
+            "NSAppleEventsUsageDescription": (
+                "LOT Bot abre Google Chrome o Microsoft Edge para publicar tus anuncios en Wallapop."
+            ),
+            "NSDesktopFolderUsageDescription": "Para elegir las fotos de tus anuncios.",
+            "NSDocumentsFolderUsageDescription": "Para elegir las fotos de tus anuncios.",
+            "NSDownloadsFolderUsageDescription": "Para elegir las fotos de tus anuncios.",
+            "NSPhotoLibraryUsageDescription": "Para elegir las fotos de tus anuncios.",
+        },
+    )
