@@ -67,7 +67,11 @@ PY="$VENV/bin/python"
 if [ "$SKIP_INSTALL" -eq 0 ]; then
     echo "=== Instalando dependencias ==="
     "$PY" -m pip install --upgrade pip --quiet
-    "$PY" -m pip install -r requirements.txt --quiet
+    # Solo paquetes precompilados para las librerías con código nativo: si pip
+    # compilara alguna en esta máquina, enlazaría con librerías de Homebrew que
+    # el cliente no tiene y la app fallaría al abrirse en su Mac.
+    "$PY" -m pip install -r requirements.txt --quiet \
+        --only-binary cryptography,PySide6-Essentials,Pillow,rapidfuzz,pydantic-core,greenlet
     "$PY" -m pip install "pyinstaller>=6.6" --quiet
 fi
 
