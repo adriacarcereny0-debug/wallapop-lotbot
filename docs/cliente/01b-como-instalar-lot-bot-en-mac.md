@@ -7,16 +7,19 @@ mismo modo DEMO.
 
 * Un Mac con macOS 11 (Big Sur) o posterior — con chip Apple (M1, M2, M3, M4) o Intel
 * **Google Chrome** o **Microsoft Edge** instalado (LOT Bot lo usa para publicar en Wallapop)
-* El fichero `LOT-Bot-macOS.dmg` que te hemos entregado
+* Descargar LOT Bot (elige el de tu Mac):
+  * Chip Apple (M1, M2, M3, M4):
+    <https://github.com/adriacarcereny0-debug/wallapop-lotbot/releases/latest/download/LOT-Bot-macOS-arm64.dmg>
+  * Procesador Intel:
+    <https://github.com/adriacarcereny0-debug/wallapop-lotbot/releases/latest/download/LOT-Bot-macOS-intel.dmg>
 
-> Usa el `.dmg` que corresponde a tu Mac: **arm64** para chip Apple, **intel** para
-> procesador Intel. Lo ves en  → **Acerca de este Mac** → «Chip» o «Procesador».
+> ¿Cuál es tu Mac? Menú  → **Acerca de este Mac** → «Chip» (Apple) o «Procesador» (Intel).
 
 ## Instalación paso a paso
 
 ### 1. Abre el .dmg
 
-Haz doble clic en `LOT-Bot-macOS.dmg`. Se abre una ventana con **LOT Bot** y la
+Haz doble clic en el `.dmg` descargado (en la carpeta **Descargas**). Se abre una ventana con **LOT Bot** y la
 carpeta **Aplicaciones**.
 
 ### 2. Arrastra LOT Bot a Aplicaciones
@@ -48,6 +51,21 @@ A partir de ahí se abre con doble clic, desde el Launchpad o con Spotlight
 
 Con LOT Bot abierto, clic derecho en su icono del Dock → **Opciones** →
 **Mantener en el Dock**.
+
+## Comprobar que todo funciona
+
+Si algo no va, abre **Terminal** y ejecuta:
+
+```
+"/Applications/LOT Bot.app/Contents/MacOS/LOT-Bot" --autoprueba
+```
+
+Debe terminar con «TODO CORRECTO». Si sale algún «FALLO», envíanos ese texto.
+
+## Actualizar
+
+Descarga el `.dmg` nuevo con el mismo enlace y arrastra LOT Bot a Aplicaciones →
+**Reemplazar**. Tus cuentas, anuncios y ajustes se conservan.
 
 ## Dónde guarda LOT Bot tus datos
 
