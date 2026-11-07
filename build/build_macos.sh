@@ -6,8 +6,13 @@
 #       ./build/build_macos.sh --run-tests
 #
 # Resultado:
-#   dist/LOT Bot.app          -> arrástrala a Aplicaciones
-#   dist/LOT-Bot-macOS.dmg    -> para enviársela al cliente
+#   dist/LOT Bot.app                   -> arrástrala a Aplicaciones
+#   dist/LOT-Bot-macOS-arm64.dmg       -> para el cliente (Mac con chip Apple)
+#   dist/LOT-Bot-macOS-intel.dmg       -> para el cliente (Mac con Intel)
+#
+# Firma y notarización (opcional, quita el aviso de «desarrollador no identificado»):
+#   MAC_SIGN_IDENTITY="Developer ID Application: Nombre (EQUIPO)"
+#   APPLE_ID=correo@ejemplo.com APPLE_TEAM_ID=EQUIPO APPLE_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,6 +34,12 @@ if [ "$(uname -s)" != "Darwin" ]; then
 fi
 
 echo "=== LOT Bot · generación de la app para Mac ==="
+
+case "$(uname -m)" in
+    arm64) ARCH_LABEL="arm64" ;;
+    *) ARCH_LABEL="intel" ;;
+esac
+DMG="dist/LOT-Bot-macOS-${ARCH_LABEL}.dmg"
 
 # 1. Python compatible (PySide6 6.8 publica paquetes para 3.9-3.13)
 PYTHON_BIN=""
@@ -71,7 +82,7 @@ echo "=== Comprobando importaciones ==="
 
 # 3. Empaquetar
 echo "=== Empaquetando con PyInstaller ==="
-rm -rf "dist/LOT Bot.app" "dist/LOT-Bot" dist/LOT-Bot-macOS.dmg
+rm -rf "dist/LOT Bot.app" "dist/LOT-Bot" dist/LOT-Bot-macOS*.dmg
 "$PY" -m PyInstaller build/LOT-Bot.spec --noconfirm --clean \
     --workpath build/work --distpath dist
 
@@ -81,23 +92,46 @@ if [ ! -d "$APP" ]; then
     exit 1
 fi
 
-# 4. Firma «ad hoc»: sin ella, los Mac con chip Apple (M1/M2/M3/M4) no abren la app.
-#    Con un certificado de Apple Developer: MAC_SIGN_IDENTITY="Developer ID Application: ..."
+# 4. Firma. Sin certificado: «ad hoc» (imprescindible en Mac con chip Apple; el
+#    cliente abre la app la primera vez con clic derecho → Abrir). Con un
+#    certificado «Developer ID Application» se firma con «hardened runtime».
 SIGN_IDENTITY="${MAC_SIGN_IDENTITY:--}"
 echo "=== Firmando (${SIGN_IDENTITY}) ==="
-codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
+if [ "$SIGN_IDENTITY" = "-" ]; then
+    codesign --force --deep --sign - "$APP"
+else
+    codesign --force --deep --timestamp --options runtime \
+        --entitlements build/entitlements.plist --sign "$SIGN_IDENTITY" "$APP"
+fi
 codesign --verify --deep --strict "$APP" && echo "Firma correcta."
+
+# Autoprueba de la app ya firmada: abre Chrome/Edge desde DENTRO del paquete.
+if [ "${SKIP_SELFCHECK:-0}" != "1" ]; then
+    echo "=== Autoprueba de la app ==="
+    "$APP/Contents/MacOS/LOT-Bot" --autoprueba
+fi
 
 # 5. Imagen de disco .dmg con acceso directo a Aplicaciones
 echo "=== Creando el .dmg ==="
 STAGE="$(mktemp -d)"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Aplicaciones"
-hdiutil create -volname "LOT Bot" -srcfolder "$STAGE" -ov -format UDZO dist/LOT-Bot-macOS.dmg >/dev/null
+hdiutil create -volname "LOT Bot" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGE"
+
+if [ "$SIGN_IDENTITY" != "-" ]; then
+    codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
+    if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] && [ -n "${APPLE_APP_PASSWORD:-}" ]; then
+        echo "=== Notarizando con Apple (puede tardar unos minutos) ==="
+        xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait
+        xcrun stapler staple "$DMG"
+        echo "Notarizada: el cliente la abre con doble clic, sin avisos."
+    fi
+fi
 
 echo ""
 echo "=== Listo ==="
-du -sh "$APP" dist/LOT-Bot-macOS.dmg
+du -sh "$APP" "$DMG"
 echo "App:  $PROJECT_ROOT/$APP"
-echo "DMG:  $PROJECT_ROOT/dist/LOT-Bot-macOS.dmg"
+echo "DMG:  $PROJECT_ROOT/$DMG"
