@@ -1,0 +1,177 @@
+<title>LOT Bot Demo</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: barra corta arriba + la ventana real de LOT Bot (captura) donde todo se puede pulsar. */
+:root {
+  color-scheme: dark;
+  --fondo: #0b0c0f; --panel: #17181d; --borde: #2e2f36; --texto: #ececef; --suave: #a9aab1;
+  --ambar: #f5a524; --ambar-texto: #17120a; --zona: rgba(245, 165, 36, .16); --sombra: rgba(0, 0, 0, .6);
+  --fuente: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--fondo); color: var(--texto); font: 15px/1.5 var(--fuente);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 28px; }
+.envoltura { max-width: 1500px; margin: 0 auto; display: grid; gap: 12px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+.marca { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.marca svg { width: 38px; height: 38px; flex: none; }
+.marca h1 { margin: 0; font-size: 19px; line-height: 1.2; font-weight: 600; text-wrap: balance; }
+.marca p { margin: 0; color: var(--suave); font-size: 13px; }
+.controles { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+button, select { font: inherit; color: inherit; }
+.boton { min-height: 36px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--borde); background: var(--panel); cursor: pointer; font-size: 14px; }
+.boton:hover { border-color: #43444c; }
+.boton:active { transform: translateY(1px); }
+.boton:disabled { opacity: .45; cursor: default; }
+select { min-height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--borde); background: var(--panel); max-width: 100%; }
+.marcar { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--suave); cursor: pointer; }
+.marcar input { accent-color: var(--ambar); width: 16px; height: 16px; }
+:focus-visible { outline: 2px solid var(--ambar); outline-offset: 2px; }
+.escena { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--borde); background: #111216; box-shadow: 0 24px 70px var(--sombra); }
+.escena > img { display: block; width: 100%; height: auto; }
+.zona { position: absolute; border: 0; padding: 0; background: transparent; cursor: pointer; border-radius: 6px; }
+.zona:hover, .zona:focus-visible { background: var(--zona); box-shadow: inset 0 0 0 1.5px var(--ambar); }
+.ver-zonas .zona { box-shadow: inset 0 0 0 1.5px rgba(245, 165, 36, .55); }
+.pie { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; }
+.pie b { font-size: 16px; font-weight: 600; }
+.pie span { color: var(--suave); max-width: 80ch; }
+.pista { margin: 0; color: var(--suave); font-size: 13px; }
+.pista kbd { font: inherit; border: 1px solid var(--borde); border-radius: 5px; padding: 0 5px; }
+.pop { position: absolute; z-index: 5; min-width: 200px; max-width: min(360px, 90%); max-height: 50%; overflow: auto; background: var(--panel); border: 1px solid var(--borde); border-radius: 10px; box-shadow: 0 14px 40px var(--sombra); padding: 8px; font-size: 14px; }
+.pop strong { display: block; padding: 4px 8px 6px; font-size: 12px; color: var(--suave); font-weight: 600; letter-spacing: .02em; }
+.pop ul { list-style: none; margin: 0; padding: 0; }
+.pop li { padding: 6px 8px; border-radius: 6px; }
+.pop li:hover { background: #22232a; }
+.velo { position: fixed; inset: 0; z-index: 20; background: rgba(5, 6, 8, .72); display: grid; place-items: center; padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+.ventana { max-width: min(1100px, 100%); max-height: 100%; display: grid; gap: 10px; justify-items: center; }
+.ventana img { max-width: 100%; max-height: calc(100vh - 140px); border-radius: 10px; border: 1px solid var(--borde); box-shadow: 0 24px 70px var(--sombra); background: #111216; }
+.ventana .acciones { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; }
+.ventana .acciones span { color: var(--suave); font-size: 13px; }
+.aviso { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 30; max-width: min(560px, calc(100% - 32px)); background: var(--panel); border: 1px solid var(--borde); border-radius: 10px; padding: 10px 16px; box-shadow: 0 14px 40px var(--sombra); font-size: 14px; }
+.aviso b { color: var(--ambar); font-weight: 600; }
+@media (max-width: 760px) { .controles { margin-left: 0; width: 100%; } select { flex: 1; } .pista kbd { display: none; } }
+@media (prefers-reduced-motion: reduce) { .boton:active { transform: none; } }
+</style>
+
+<div class="envoltura">
+  <header>
+    <div class="marca">
+      <svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="112" fill="#0b0b0d"/><g transform="translate(-14 10) rotate(42 256 256)"><path d="M212 232 L300 232 L380 40 L132 40 Z" fill="#F5A524" opacity=".75"/><path d="M196 244 H316 L292 312 H220 Z" fill="#F4F1EA"/><rect x="220" y="316" width="72" height="148" rx="24" fill="#F4F1EA"/></g></svg>
+      <div><h1>LOT Bot · Demo</h1><p>El programa real en modo demostración. Pulsa lo que quieras: nada se envía a Wallapop.</p></div>
+    </div>
+    <div class="controles">
+      <button class="boton" id="atras" type="button" disabled>‹ Atrás</button>
+      <label for="pantalla" hidden>Pantalla</label>
+      <select id="pantalla" aria-label="Elegir pantalla"></select>
+      <label class="marcar" for="verzonas"><input type="checkbox" id="verzonas"> Marcar lo que se puede pulsar</label>
+    </div>
+  </header>
+  <div class="escena" id="escena"><img id="captura" alt=""><div class="pop" id="pop" hidden><strong id="poptitulo">Opciones</strong><ul id="poplista"></ul></div></div>
+  <div class="pie"><b id="nombre"></b><span id="texto"></span></div>
+  <p class="pista">Botones, pestañas, desplegables y campos funcionan como en LOT Bot: abren sus ventanas y te dicen qué hacen, sin cambiar nada. Usa <kbd>Esc</kbd> para cerrar una ventana.</p>
+</div>
+<div class="velo" id="velo" hidden><div class="ventana" role="dialog" aria-modal="true" aria-labelledby="vtitulo"><img id="vimg" alt=""><div class="acciones"><span id="vtitulo"></span><button class="boton" id="vsig" type="button" hidden>Siguiente ventana</button><button class="boton" id="vcerrar" type="button">Cerrar</button></div></div></div>
+<div class="aviso" id="aviso" role="status" hidden></div>
+
+<script>
+(() => {
+const D = __DATOS__;
+const INCRUSTADAS = null;
+const ruta = (n) => (INCRUSTADAS ? INCRUSTADAS[n] : "__RUTA__" + n);
+const $ = (id) => document.getElementById(id);
+const escena = $("escena"), img = $("captura"), sel = $("pantalla"), pop = $("pop");
+let actual = null;
+const pila = [];
+
+D.pantallas.forEach((n, i) => sel.add(new Option(n, "s" + i)));
+
+function cerrarPop() { pop.hidden = true; }
+let temporizador = null;
+function avisar(texto, titulo) {
+  const a = $("aviso");
+  a.textContent = "";
+  if (titulo) { const b = document.createElement("b"); b.textContent = titulo + " · "; a.appendChild(b); }
+  a.appendChild(document.createTextNode(texto));
+  a.hidden = false;
+  clearTimeout(temporizador);
+  temporizador = setTimeout(() => { a.hidden = true; }, 4200);
+}
+
+let ventanas = [], vi = 0, foco = null;
+function abrirVentanas(imgs, titulo) {
+  ventanas = imgs; vi = 0; foco = document.activeElement;
+  pintarVentana(titulo);
+  $("velo").hidden = false;
+  $("vcerrar").focus();
+}
+function pintarVentana(titulo) {
+  $("vimg").src = ruta(ventanas[vi]);
+  $("vimg").alt = "Ventana de LOT Bot: " + (titulo || "");
+  $("vtitulo").textContent = (titulo ? "«" + titulo + "»" : "") + (ventanas.length > 1 ? " · " + (vi + 1) + " de " + ventanas.length : "");
+  $("vsig").hidden = vi >= ventanas.length - 1;
+}
+function cerrarVentana() { $("velo").hidden = true; if (foco) foco.focus(); }
+$("vcerrar").onclick = cerrarVentana;
+$("vsig").onclick = () => { vi += 1; pintarVentana($("vtitulo").dataset.t); };
+$("velo").addEventListener("click", (e) => { if (e.target === $("velo")) cerrarVentana(); });
+
+function abrirLista(z) {
+  $("poptitulo").textContent = z.opciones.length ? "Opciones del desplegable" : "Desplegable (sin opciones ahora)";
+  const ul = $("poplista"); ul.textContent = "";
+  z.opciones.forEach((o) => { const li = document.createElement("li"); li.textContent = o; ul.appendChild(li); });
+  pop.style.left = Math.min(z.x * 100, 70) + "%";
+  pop.style.top = (z.y + z.h) * 100 + "%";
+  pop.hidden = false;
+}
+
+function pulsar(z) {
+  cerrarPop();
+  if (z.tipo === "ir" && D.estados[z.a]) mostrar(z.a);
+  else if (z.tipo === "ventana") { $("vtitulo").dataset.t = z.etiqueta || ""; abrirVentanas(z.imgs, z.etiqueta); }
+  else if (z.tipo === "lista") abrirLista(z);
+  else avisar(z.texto || "En el programa hace esta acción.", z.etiqueta);
+}
+
+function mostrar(id, guardar = true) {
+  const e = D.estados[id];
+  if (!e) return;
+  if (guardar && actual && actual !== id) pila.push(actual);
+  actual = id;
+  cerrarPop();
+  img.src = ruta(e.img);
+  img.alt = "Pantalla «" + e.titulo + "» de LOT Bot";
+  escena.querySelectorAll(".zona").forEach((b) => b.remove());
+  e.zonas.forEach((z) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "zona";
+    const nombre = z.etiqueta || z.texto || "Elemento";
+    b.title = nombre; b.setAttribute("aria-label", nombre);
+    Object.assign(b.style, { left: z.x * 100 + "%", top: z.y * 100 + "%", width: z.w * 100 + "%", height: z.h * 100 + "%" });
+    b.addEventListener("click", (ev) => { ev.stopPropagation(); pulsar(z); });
+    escena.insertBefore(b, pop);
+  });
+  $("nombre").textContent = e.titulo;
+  $("texto").textContent = D.textos[e.vista] || "";
+  sel.value = "s" + e.vista;
+  $("atras").disabled = pila.length === 0;
+  if (location.hash !== "#" + id) history.replaceState(null, "", "#" + id);
+}
+
+$("atras").onclick = () => { if (pila.length) mostrar(pila.pop(), false); };
+sel.onchange = () => mostrar(sel.value);
+$("verzonas").onchange = (e) => escena.classList.toggle("ver-zonas", e.target.checked);
+escena.addEventListener("click", cerrarPop);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { if (!$("velo").hidden) cerrarVentana(); cerrarPop(); }
+  if (!$("velo").hidden || e.target.closest("select, input")) return;
+  const i = D.estados[actual] ? D.estados[actual].vista : 0;
+  if (e.key === "ArrowRight") mostrar("s" + ((i + 1) % D.pantallas.length));
+  if (e.key === "ArrowLeft") mostrar("s" + ((i - 1 + D.pantallas.length) % D.pantallas.length));
+});
+window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h !== actual) mostrar(h); });
+const inicio = location.hash.slice(1);
+mostrar(D.estados[inicio] ? inicio : "s2", false);
+})();
+</script>

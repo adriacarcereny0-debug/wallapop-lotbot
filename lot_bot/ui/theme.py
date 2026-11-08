@@ -222,6 +222,8 @@ QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus,
 QSpinBox:focus, QDoubleSpinBox:focus {{ border-color: {ACCENT}; }}
 QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{ color: {TEXT_FAINT}; }}
 
+/* Altura mínima del texto: en ventanas pequeñas el contenido no se corta. */
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{ min-height: 20px; }}
 QComboBox {{ padding-right: 34px; }}
 QComboBox::drop-down {{
     subcontrol-origin: padding;
