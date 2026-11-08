@@ -13,9 +13,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
-    QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QStatusBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -63,6 +64,23 @@ NAVIGATION = [
 ]
 #: Primera pantalla del grupo «Más» del menú.
 MORE_SECTION_START = "Panel"
+#: Ancho de la barra lateral de iconos.
+RAIL_WIDTH = 84
+#: Nombre corto bajo cada icono (el completo sale al pasar el ratón).
+SHORT_LABELS = {
+    "Asistente IA": "Asistente",
+    "Cuentas de Wallapop": "Cuentas",
+    "Publicación automática": "Publicar",
+    "Anuncios (eliminar)": "Anuncios",
+    "Estadísticas": "Estadíst.",
+    "Imágenes / IA": "Imágenes",
+    "Anuncio principal": "Principal",
+    "Configuración": "Ajustes",
+    "Panel": "Panel",
+    "Productos": "Productos",
+    "Historial": "Historial",
+    "Logs y errores": "Logs",
+}
 
 
 class MainWindow(QMainWindow):
@@ -128,47 +146,46 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def _build_sidebar(self) -> QWidget:
+        """Barra lateral estrecha: icono + nombre corto (el nombre completo
+        sale al dejar el ratón encima)."""
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(252)
+        sidebar.setFixedWidth(RAIL_WIDTH)
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(0, 0, 0, 12)
-        layout.setSpacing(0)
+        layout.setContentsMargins(8, 14, 8, 6)
+        layout.setSpacing(2)
 
-        # Logo + nombre
-        header = QHBoxLayout()
-        header.setContentsMargins(22, 22, 18, 10)
-        header.setSpacing(12)
         logo = QLabel()
-        logo.setPixmap(_logo_pixmap(36))
-        logo.setFixedSize(36, 36)
-        header.addWidget(logo)
-        names = QVBoxLayout()
-        names.setSpacing(1)
-        brand = QLabel(APP_NAME)
-        brand.setObjectName("Brand")
-        names.addWidget(brand)
+        logo.setPixmap(_logo_pixmap(34))
+        logo.setFixedSize(34, 34)
+        logo.setToolTip(APP_NAME)
+        layout.addWidget(logo, 0, Qt.AlignmentFlag.AlignHCenter)
+        # Modo activo (se ve también en la franja DEMO y en la barra de estado).
         self.brand_sub = QLabel()
         self.brand_sub.setObjectName("BrandSub")
-        names.addWidget(self.brand_sub)
-        header.addLayout(names, 1)
-        layout.addLayout(header)
+        self.brand_sub.setVisible(False)
+        layout.addWidget(self.brand_sub)
+        layout.addSpacing(12)
 
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
-        self.nav_buttons: list[QPushButton] = []
+        self.nav_buttons: list[QToolButton] = []
         for index, (label, icon, _view) in enumerate(NAVIGATION):
-            if index == 0 or label == MORE_SECTION_START:
-                section = QLabel("PRINCIPAL" if index == 0 else "MÁS")
-                section.setObjectName("NavSection")
-                layout.addWidget(section)
-            button = QPushButton(f"  {label}")
+            if label == MORE_SECTION_START:
+                layout.addSpacing(10)  # separa «lo principal» del resto
+            button = QToolButton()
             button.setObjectName("NavButton")
+            button.setText(SHORT_LABELS.get(label, label))
+            button.setToolTip(label)
+            button.setAccessibleName(label)
             button.setCheckable(True)
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            button.setMinimumHeight(50)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             if icon in icons.SHAPES:
-                button.setIcon(icons.nav_icon(icon, theme.TEXT_MUTED, theme.ACCENT))
-                button.setIconSize(icons.icon_size(18))
+                button.setIcon(icons.nav_icon(icon, theme.RAIL_TEXT, "#ffffff", 20))
+                button.setIconSize(icons.icon_size(20))
             button.clicked.connect(lambda _=False, i=index: self._go_to(i))
             self.nav_group.addButton(button, index)
             self.nav_buttons.append(button)
@@ -177,8 +194,8 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
 
         self.mode_label = QLabel()
-        self.mode_label.setWordWrap(True)
-        self.mode_label.setObjectName("SidebarFooter")
+        self.mode_label.setObjectName("RailFooter")
+        self.mode_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.mode_label)
         return sidebar
 
@@ -230,7 +247,9 @@ class MainWindow(QMainWindow):
             f"Asistente: {self.app.agent.provider.describe()}"
         )
         self.brand_sub.setText(backend.label)
-        self.mode_label.setText(detail)
+        # En la barra estrecha: «2/2» cuentas; el detalle, al pasar el ratón.
+        self.mode_label.setText(("DEMO\n" if backend.demo else "") + f"{connected}/{len(accounts)}")
+        self.mode_label.setToolTip(f"{connected} de {len(accounts)} cuentas conectadas\n\n{detail}")
         self.demo_banner.setVisible(backend.demo)
         self.demo_banner.setText(
             "MODO DEMO — Datos simulados. Nada de lo que hagas se envía a Wallapop: "

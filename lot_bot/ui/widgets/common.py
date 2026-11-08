@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -37,6 +37,46 @@ class Card(QFrame):
     def add(self, widget: QWidget) -> QWidget:
         self.body.addWidget(widget)
         return widget
+
+
+class ProgressRing(QWidget):
+    """Anillo de progreso plano (sin brillos): cuánto lleva hecho la cola."""
+
+    def __init__(self, size: int = 64, width: int = 6, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._value = 0
+        self._maximum = 1
+        self._width = width
+        self.color = theme.ACCENT
+        self.setFixedSize(size, size)
+        self.setAccessibleName("Progreso")
+
+    def set_progress(self, value: int, maximum: int, color: str | None = None) -> None:
+        self._value = max(0, value)
+        self._maximum = max(1, maximum)
+        if color:
+            self.color = color
+        self.setAccessibleDescription(f"{self._value} de {self._maximum}")
+        self.update()
+
+    def value(self) -> int:
+        return self._value
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - firma de Qt
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        half = self._width / 2
+        rect = QRectF(half, half, self.width() - self._width, self.height() - self._width)
+        track = QPen(QColor(theme.BORDER_STRONG), self._width)
+        painter.setPen(track)
+        painter.drawEllipse(rect)
+        fraction = min(1.0, self._value / self._maximum)
+        if fraction > 0:
+            pen = QPen(QColor(self.color), self._width)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawArc(rect, 90 * 16, int(-fraction * 360 * 16))
+        painter.end()
 
 
 class SectionTitle(QLabel):

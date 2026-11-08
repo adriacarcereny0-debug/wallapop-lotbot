@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from lot_bot.ui import theme
 from lot_bot.ui.views.base import BaseView
 from lot_bot.ui.widgets.common import (
     Card,
+    ProgressRing,
     SectionTitle,
     ask_confirmation,
     build_table,
@@ -18,14 +19,14 @@ from lot_bot.ui.widgets.common import (
 )
 
 STATUS_LABELS = {
-    "pending": "○ Pendiente",
-    "generating": "⏳ Generando imagen",
-    "waiting": "⏳ En espera",
-    "publishing": "⏳ Publicando",
-    "published": "✓ Publicado",
-    "unconfirmed": "? Resultado no confirmado",
-    "failed": "✗ Fallido",
-    "cancelled": "— Cancelado",
+    "pending": "Pendiente",
+    "generating": "Generando imagen",
+    "waiting": "En espera",
+    "publishing": "Publicando",
+    "published": "Publicado",
+    "unconfirmed": "Sin confirmar",
+    "failed": "Fallido",
+    "cancelled": "Cancelado",
 }
 JOB_LABELS = {
     "pending": "Preparada",
@@ -53,33 +54,41 @@ class PublishQueueView(BaseView):
         self.add_header_button("Actualizar", self.refresh)
         self._job_id: int | None = None
 
+        # Arriba: anillo de progreso, qué está pasando y los botones.
         card = Card()
-        self.summary_title = SectionTitle("No hay ninguna cola")
-        card.add(self.summary_title)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setTextVisible(True)
-        card.add(self.progress_bar)
-        self.summary = QLabel()
-        self.summary.setWordWrap(True)
-        card.add(self.summary)
-
-        controls = QHBoxLayout()
+        hero = QHBoxLayout()
+        hero.setSpacing(18)
+        self.ring = ProgressRing(64, 6)
+        hero.addWidget(self.ring)
+        texts = QVBoxLayout()
+        texts.setSpacing(2)
+        self.summary_title = QLabel("No hay ninguna cola")
+        self.summary_title.setObjectName("HeroCaption")
+        texts.addWidget(self.summary_title)
+        self.hero_title = QLabel("Nada publicándose")
+        self.hero_title.setObjectName("HeroTitle")
+        texts.addWidget(self.hero_title)
+        self.hero_text = QLabel()
+        self.hero_text.setObjectName("HeroText")
+        self.hero_text.setWordWrap(True)
+        texts.addWidget(self.hero_text)
+        hero.addLayout(texts, 1)
         self.start_button = QPushButton("Iniciar")
         self.start_button.setObjectName("Primary")
         self.start_button.clicked.connect(self._start)
-        controls.addWidget(self.start_button)
+        hero.addWidget(self.start_button)
         self.pause_button = QPushButton("Pausar")
         self.pause_button.clicked.connect(self._pause)
-        controls.addWidget(self.pause_button)
+        hero.addWidget(self.pause_button)
         self.resume_button = QPushButton("Continuar")
+        self.resume_button.setObjectName("Primary")
         self.resume_button.clicked.connect(self._resume)
-        controls.addWidget(self.resume_button)
-        self.cancel_button = QPushButton("Cancelar cola")
-        self.cancel_button.setObjectName("Danger")
-        self.cancel_button.clicked.connect(self._cancel)
-        controls.addWidget(self.cancel_button)
-        controls.addStretch(1)
-        card.body.addLayout(controls)
+        hero.addWidget(self.resume_button)
+        card.body.addLayout(hero)
+        self.summary = QLabel()
+        self.summary.setObjectName("HeroText")
+        self.summary.setWordWrap(True)
+        card.add(self.summary)
         self.body.addWidget(card)
 
         tasks = Card()
@@ -93,6 +102,10 @@ class PublishQueueView(BaseView):
         self.retry_button.clicked.connect(self._retry)
         row.addWidget(self.retry_button)
         row.addStretch(1)
+        self.cancel_button = QPushButton("Cancelar cola")
+        self.cancel_button.setObjectName("Danger")
+        self.cancel_button.clicked.connect(self._cancel)
+        row.addWidget(self.cancel_button)
         tasks.body.addLayout(row)
         self.body.addWidget(tasks, 1)
 
@@ -111,33 +124,41 @@ class PublishQueueView(BaseView):
         progress = queue.progress(None)
         if progress is None:
             self._job_id = None
-            self.summary_title.setText("No hay ninguna cola")
-            self.summary.setText(
+            self.summary_title.setText("Publicación automática")
+            self.hero_title.setText("No hay ninguna cola")
+            self.hero_text.setText(
                 "Pide en el asistente, por ejemplo, «Publica 10 canapés». Verás aquí el "
                 f"progreso. Intervalo mínimo actual: {queue.interval} s."
             )
-            self.progress_bar.setRange(0, 1)
-            self.progress_bar.setValue(0)
+            self.summary.setText("")
+            self.ring.set_progress(0, 1)
             fill_table(self.table, [])
             self._buttons(None)
             return
         self._job_id = progress.job_id
         demo = " · MODO DEMO (simulado)" if progress.is_demo else ""
-        self.summary_title.setText(
-            f"{progress.name} — {JOB_LABELS.get(progress.status, progress.status)}{demo}"
-        )
-        self.progress_bar.setRange(0, max(progress.total, 1))
-        self.progress_bar.setValue(progress.published)
-        self.progress_bar.setFormat(f"{progress.published}/{progress.total}")
+        estado = JOB_LABELS.get(progress.status, progress.status)
+        self.summary_title.setText(f"{progress.name} · {estado}{demo}")
+        self.hero_title.setText(f"{progress.published} de {progress.total} publicados")
+        ring_color = {
+            "paused": theme.WARNING, "completed": theme.SUCCESS, "cancelled": theme.TEXT_FAINT,
+        }.get(progress.status, theme.ACCENT)
+        self.ring.set_progress(progress.published, progress.total, ring_color)
+        if progress.status == "running" and progress.next_allowed_at:
+            siguiente = f"Siguiente a las {progress.next_allowed_at:%H:%M}"
+            if progress.current_account:
+                siguiente += f" en {progress.current_account}"
+            self.hero_text.setText(siguiente + ".")
+        elif progress.status == "running":
+            self.hero_text.setText(f"Publicando en {progress.current_account or '…'}.")
+        else:
+            self.hero_text.setText(estado + ".")
         lines = [
-            f"{progress.total} anuncios preparados · intervalo mínimo {progress.interval_seconds} s",
-            f"Cuenta: {progress.current_account or '—'}",
             "Última publicación: "
-            + (f"{progress.last_publish_at:%H:%M:%S}" if progress.last_publish_at else "—"),
-            "Próxima publicación permitida: "
-            + (f"{progress.next_allowed_at:%H:%M:%S}" if progress.next_allowed_at else "—"),
-            f"✓ {progress.published} publicados · ⏳ {progress.in_progress} en espera · "
-            f"○ {progress.pending} pendientes · ✗ {progress.failed} fallidos",
+            + (f"{progress.last_publish_at:%H:%M:%S}" if progress.last_publish_at else "—")
+            + f" · intervalo mínimo {progress.interval_seconds} s · "
+            f"{progress.in_progress} en curso · {progress.pending} pendientes · "
+            f"{progress.failed} fallidos",
         ]
         verifying = [
             v for v in queue.pending_verifications() if v["cola"] == progress.job_id
@@ -182,6 +203,10 @@ class PublishQueueView(BaseView):
         self.start_button.setEnabled(status == "pending")
         self.pause_button.setEnabled(status == "running")
         self.resume_button.setEnabled(status == "paused")
+        # Solo se ve el botón que tiene sentido ahora (menos ruido).
+        self.start_button.setVisible(status == "pending")
+        self.pause_button.setVisible(status == "running")
+        self.resume_button.setVisible(status == "paused")
         self.cancel_button.setEnabled(status in ("pending", "running", "paused"))
         self.retry_button.setEnabled(bool(progress and progress.failed))
 
