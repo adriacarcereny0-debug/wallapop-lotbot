@@ -152,6 +152,7 @@ def _archivo(texto):
 QFileDialog.getOpenFileNames = staticmethod(_archivo("Se abre la ventana de tu ordenador para elegir fotos (puedes elegir varias)."))
 QFileDialog.getOpenFileName = staticmethod(_archivo("Se abre la ventana de tu ordenador para elegir un archivo."))
 QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: abiertas.append({"tipo": "nota", "texto": "Se abre la ventana de tu ordenador para elegir una carpeta."}) or "")
+QInputDialog.getMultiLineText = staticmethod(lambda *a, **k: abiertas.append({"tipo": "nota", "texto": "Te pide que cuentes en pocas palabras qué ha pasado y crea en el Escritorio un .zip para enviar a soporte (sin contraseñas, cookies ni claves)."}) or ("", False))
 QInputDialog.getText = staticmethod(lambda *a, **k: abiertas.append({"tipo": "nota", "texto": f"Te pregunta: «{a[2] if len(a) > 2 else ''}» y escribes la respuesta."}) or ("", False))
 
 
