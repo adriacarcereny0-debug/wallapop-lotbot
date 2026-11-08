@@ -15,7 +15,13 @@ if not defined GIT (
 )
 echo Descargando la ultima version de LOT Bot...
 "%GIT%" stash push -m "LOT Bot: cambios locales antes de actualizar" >nul 2>&1
-"%GIT%" pull --ff-only
+rem Si existe el canal «estable» en GitHub, se sigue ese; si no, la rama de esta copia.
+"%GIT%" ls-remote --exit-code --heads origin estable >nul 2>&1
+if errorlevel 1 (
+    "%GIT%" pull --ff-only
+) else (
+    "%GIT%" fetch origin estable && "%GIT%" merge --ff-only origin/estable
+)
 if errorlevel 1 (
     echo.
     echo No se ha podido actualizar. Revisa el mensaje de arriba o contacta con soporte.

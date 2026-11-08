@@ -150,3 +150,18 @@ def test_no_actualiza_con_una_cola_publicando(app_with_data, monkeypatch):
     control = update_banner.UpdateController(app_with_data, Runner(), QWidget())
     control.update()
     assert errores and "cola publicando" in errores[0]
+
+
+def test_si_existe_el_canal_estable_solo_llega_lo_publicado_ahi(repos):
+    """Con una rama «estable», lo que subes a tu rama de trabajo NO llega a
+    los clientes hasta que lo publicas en «estable»."""
+    tu, cliente, tmp = repos
+    git(tu, "push", "origin", "main:estable")  # canal creado (misma versión)
+    publicar(tu, "lot_bot.txt", "en pruebas\n", "Cambio aún en pruebas")
+    up = updater(cliente, tmp)
+    assert not up.check().available  # el cambio en pruebas no se ofrece
+    git(tu, "push", "origin", "main:estable")  # ahora sí: publicado
+    info = up.check()
+    assert info.available and info.branch == "estable"
+    assert up.apply().ok
+    assert (cliente / "lot_bot.txt").read_text() == "en pruebas\n"

@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 
 #: Rama que se sigue si la copia del cliente no tiene una rama de GitHub asociada.
 DEFAULT_BRANCH = "main"
+#: Canal de versiones para clientes: si existe esta rama en GitHub, se sigue
+#: ella (solo llega a los clientes lo que se publica ahí a propósito). Si no
+#: existe, se sigue la rama de la copia del cliente.
+CHANNEL_BRANCH = "estable"
 #: Cada cuánto se mira si hay una versión nueva (con LOT Bot abierto).
 CHECK_EVERY_HOURS = 6
 
@@ -127,7 +131,11 @@ class Updater:
         return result.stdout.strip()
 
     def tracked_branch(self) -> tuple[str, str]:
-        """(remoto, rama) que sigue esta copia; si no sigue ninguna, origin/main."""
+        """(remoto, rama) de donde llegan las versiones: el canal «estable» si
+        existe en GitHub; si no, la rama que sigue esta copia (u origin/main)."""
+        channel = self._git("ls-remote", "--exit-code", "--heads", "origin", CHANNEL_BRANCH, timeout=60)
+        if channel.returncode == 0 and channel.stdout.strip():
+            return "origin", CHANNEL_BRANCH
         result = self._git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
         if result.returncode == 0 and "/" in result.stdout.strip():
             remote, branch = result.stdout.strip().split("/", 1)
@@ -184,7 +192,9 @@ class Updater:
         info = self.check()
         if not info.available:
             return UpdateResult(False, info.message)
-        remote, branch = self.tracked_branch()
+        remote, branch = "origin", info.branch
+        if branch != CHANNEL_BRANCH:
+            remote, branch = self.tracked_branch()
         previous = self._out("rev-parse", "HEAD")
         # Cambios hechos a mano en el programa: se guardan aparte, nunca se borran.
         if self._out("status", "--porcelain", "--untracked-files=no"):
