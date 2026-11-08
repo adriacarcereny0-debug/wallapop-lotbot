@@ -23,7 +23,7 @@ def test_ningun_fichero_de_codigo_esta_ignorado_por_git():
         for p in (ROOT / folder).rglob("*")
         if p.is_file()
         and "__pycache__" not in p.parts
-        and p.suffix in {".py", ".yaml", ".ps1", ".sh", ".spec", ".qss", ".svg", ".ico", ".png"}
+        and p.suffix in {".py", ".yaml", ".ps1", ".sh", ".spec", ".qss", ".svg", ".ico", ".icns", ".png"}
     ]
     sources += [p.name for p in ROOT.glob("*.py")]
     result = subprocess.run(

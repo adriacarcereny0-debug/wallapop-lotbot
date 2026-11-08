@@ -15,6 +15,8 @@ def ensure_browser_component() -> None:
     """Si falta Playwright (p. ej. tras copiar una versión nueva), se instala
     antes de abrir: sin él, el bot no puede usar el navegador y se queda en
     modo DEMO."""
+    if getattr(sys, "frozen", False):
+        return  # en el .exe / .app Playwright ya viaja dentro
     try:
         import playwright.sync_api  # noqa: F401
 
@@ -33,6 +35,12 @@ def ensure_browser_component() -> None:
 
 
 ensure_browser_component()
+
+if __name__ == "__main__" and "--autoprueba" in sys.argv[1:]:
+    # Comprueba el programa (también dentro del .exe / .app) sin abrir ventanas.
+    from lot_bot.selfcheck import run as run_selfcheck
+
+    raise SystemExit(run_selfcheck())
 
 from lot_bot.app import main  # noqa: E402
 

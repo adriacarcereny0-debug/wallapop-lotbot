@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 # --- Paleta «E2 · noche»: grafito neutro, una sola luz cálida de acento ---
 # Sin degradados ni brillos de color: superficies planas que se distinguen por
 # un tono y una línea fina, como una app de escritorio de verdad.
@@ -32,7 +34,16 @@ RAIL_BG = "#16171b"
 RAIL_ACTIVE = "#26272d"
 RAIL_TEXT = "#9c9da4"
 
-FONT_FAMILY = "'Segoe UI Variable Text', 'Segoe UI', 'Inter', 'Helvetica Neue', Arial, sans-serif"
+IS_MAC = sys.platform == "darwin"
+#: Tecla de los atajos tal y como se ve en el teclado: Cmd (⌘) en Mac, Ctrl en Windows.
+MOD_KEY = "⌘" if IS_MAC else "Ctrl"
+#: Donde se arrastran los archivos: el Finder en Mac, el Explorador en Windows.
+FILE_MANAGER = "el Finder" if IS_MAC else "Windows"
+
+FONT_FAMILY = (
+    "'Segoe UI Variable Text', 'Segoe UI', '.AppleSystemUIFont', 'SF Pro Text', "
+    "'Inter', 'Helvetica Neue', Arial, sans-serif"
+)
 
 
 def _asset(name: str) -> str:

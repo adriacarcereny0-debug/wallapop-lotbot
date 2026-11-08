@@ -57,6 +57,20 @@ Prueba en el asistente: «sube el canapé», «publica 10 canapés en las cuenta
 «estadísticas», «¿qué habitación funciona mejor?», «genera una imagen»,
 «prepara una respuesta para este cliente».
 
+## Empezar en Mac
+
+* **Con la app ya compilada:** abre `LOT-Bot-macOS.dmg`, arrastra **LOT Bot** a
+  Aplicaciones y ábrelo la primera vez con clic derecho → **Abrir**
+  ([guía](docs/cliente/01b-como-instalar-lot-bot-en-mac.md)).
+* **Desde el código:** instala Python 3.12 (python.org) y haz doble clic en
+  **`iniciar_lot_bot_mac.command`**.
+* **Generar la app:** doble clic en **`compilar_app_mac.command`** →
+  `dist/LOT Bot.app` y `dist/LOT-Bot-macOS.dmg`. Sin Mac, GitHub Actions la genera
+  sola (workflow «App para Mac», ver [compilación](docs/dev/compilacion.md)).
+
+No existe versión para iPhone/iPad: el bot necesita controlar Chrome/Edge de
+escritorio, cosa que iOS no permite.
+
 ## Anuncio principal (plantilla de canapés)
 
 La pantalla **Anuncio principal** guarda el anuncio maestro del cliente con sus datos

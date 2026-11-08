@@ -12,7 +12,11 @@ python-dotenv>=1.0,<2.0
 PyYAML>=6.0,<7.0
 
 # --- Seguridad ---
-cryptography>=42.0
+cryptography>=42.0; sys_platform != "darwin" or platform_machine != "x86_64"
+# Mac con Intel: desde la 49 ya no hay paquete precompilado (con OpenSSL incluido)
+# para Intel; compilarlo enlaza con el OpenSSL de Homebrew y la app empaquetada
+# no arranca («Symbol not found: _EVP_DigestSqueeze»). La 48 sí lo tiene.
+cryptography>=42.0,<49; sys_platform == "darwin" and platform_machine == "x86_64"
 keyring>=25.0
 
 # --- Red ---
