@@ -19,6 +19,7 @@ class LogsView(BaseView):
     def build(self) -> None:
         self.add_header_button("Actualizar", self.refresh)
         self.add_header_button("Abrir carpeta", self._show_path)
+        self.add_header_button("Enviar informe a soporte", self._send_report, primary=True)
 
         toolbar = Toolbar()
         self.filter = QLineEdit()
@@ -64,6 +65,11 @@ class LogsView(BaseView):
         self.viewer.setPlainText("\n".join(lines))
         self.viewer.verticalScrollBar().setValue(self.viewer.verticalScrollBar().maximum())
         self.header.set_subtitle(f"{len(lines)} línea(s)")
+
+    def _send_report(self) -> None:
+        from lot_bot.ui.support import send_support_report
+
+        send_support_report(self)
 
     def _toggle_autorefresh(self) -> None:
         if self.autorefresh.isChecked():

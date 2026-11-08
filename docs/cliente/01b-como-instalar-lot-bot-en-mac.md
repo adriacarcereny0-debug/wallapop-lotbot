@@ -64,8 +64,14 @@ Debe terminar con «TODO CORRECTO». Si sale algún «FALLO», envíanos ese tex
 
 ## Actualizar
 
-Descarga el `.dmg` nuevo con el mismo enlace y arrastra LOT Bot a Aplicaciones →
-**Reemplazar**. Tus cuentas, anuncios y ajustes se conservan.
+* **Con la app (.dmg):** descarga el `.dmg` nuevo con el mismo enlace y arrastra
+  LOT Bot a Aplicaciones → **Reemplazar**.
+* **Con la copia de GitHub** (la carpeta que se abre con `iniciar_lot_bot_mac.command`):
+  LOT Bot avisa solo cuando hay una versión nueva; pulsa **Actualizar** en la franja
+  de arriba y se vuelve a abrir solo. También puedes hacer doble clic en
+  `actualizar_lot_bot_mac.command`.
+
+En los dos casos tus cuentas, anuncios y ajustes se conservan.
 
 ## Dónde guarda LOT Bot tus datos
 

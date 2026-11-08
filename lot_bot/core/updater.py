@@ -103,6 +103,11 @@ class Updater:
 
     def unsupported_reason(self) -> str:
         if not (self.repo_dir / ".git").exists():
+            if sys.platform == "darwin":
+                return (
+                    "Esta es la app de Mac (.dmg): para actualizar, descarga el .dmg nuevo con "
+                    "el mismo enlace y arrastra LOT Bot a Aplicaciones → Reemplazar."
+                )
             return "Esta instalación no es una copia de GitHub: se actualiza a mano."
         return "No se encuentra git en este ordenador (instala Git para Windows o GitHub Desktop)."
 

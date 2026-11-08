@@ -531,8 +531,29 @@ class SettingsView(BaseView):
         row.addWidget(self.rollback_button)
         updates.body.addLayout(row)
         layout.addWidget(updates)
+
+        support = Card()
+        support.add(SectionTitle("Soporte"))
+        support_text = QLabel(
+            "Si algo falla, crea un informe y envíaselo a soporte por WhatsApp o email: lleva "
+            "los registros y las capturas de los fallos, sin contraseñas, cookies ni claves."
+        )
+        support_text.setWordWrap(True)
+        support.add(support_text)
+        support_row = QHBoxLayout()
+        report_button = QPushButton("Enviar informe a soporte")
+        report_button.clicked.connect(self._send_report)
+        support_row.addWidget(report_button)
+        support_row.addStretch(1)
+        support.body.addLayout(support_row)
+        layout.addWidget(support)
         layout.addStretch(1)
         return widget
+
+    def _send_report(self) -> None:
+        from lot_bot.ui.support import send_support_report
+
+        send_support_report(self)
 
     def _updates(self, action: str) -> None:
         """Usa el mismo proceso que la franja de arriba de la ventana."""
