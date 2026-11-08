@@ -341,6 +341,11 @@ def create_application(
         db, build_image_generator(backend.demo, app.api_keys), paths.images / "generadas"
     )
     app.publish_queue = PublishQueue(db, audit, app)
+    # Actualizar con un clic desde GitHub (copias del repositorio).
+    from lot_bot.config.paths import app_dir
+    from lot_bot.core.updater import Updater
+
+    app.updater = Updater(app_dir(), paths.root / "actualizacion.json")
     app.accounts.connected_listeners.append(app.publish_queue.account_reconnected)
     # La primera cuenta REAL que se conecta borra todo lo de prueba.
     from lot_bot.core.demo_cleanup import on_account_connected

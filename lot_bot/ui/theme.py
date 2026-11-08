@@ -127,6 +127,11 @@ QFrame#VerificationBanner {{
     background: #2a2215;
     border-bottom: 1px solid #4a3818;
 }}
+QFrame#UpdateBanner {{
+    background: #16202a;
+    border-bottom: 1px solid #24384a;
+}}
+QLabel#UpdateBannerText {{ color: #cfe4f7; font-weight: 600; background: transparent; }}
 QLabel#VerificationBannerText {{
     color: #f2d9ae;
     font-weight: 600;

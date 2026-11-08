@@ -26,8 +26,9 @@ shutil.rmtree(data_dir, ignore_errors=True)
 data_dir.mkdir(parents=True)
 os.environ["LOT_BOT_DATA_DIR"] = str(data_dir)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ["LOT_BOT_UPDATE_CHECK"] = "0"  # la demo no busca actualizaciones
 
-from PySide6.QtCore import QBuffer, QIODevice, QLocale, QPoint  # noqa: E402
+from PySide6.QtCore import QBuffer, QIODevice, QLocale  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QAbstractButton,
     QApplication,

@@ -511,8 +511,40 @@ class SettingsView(BaseView):
         )
         card.add(self.about_label)
         layout.addWidget(card)
+
+        updates = Card()
+        updates.add(SectionTitle("Actualizaciones"))
+        self.version_label = QLabel()
+        self.version_label.setWordWrap(True)
+        updates.add(self.version_label)
+        row = QHBoxLayout()
+        self.check_updates_button = QPushButton("Buscar actualizaciones")
+        self.check_updates_button.clicked.connect(lambda: self._updates("check"))
+        row.addWidget(self.check_updates_button)
+        self.apply_update_button = QPushButton("Actualizar ahora")
+        self.apply_update_button.setObjectName("Primary")
+        self.apply_update_button.clicked.connect(lambda: self._updates("update"))
+        row.addWidget(self.apply_update_button)
+        row.addStretch(1)
+        self.rollback_button = QPushButton("Volver a la versión anterior")
+        self.rollback_button.clicked.connect(lambda: self._updates("rollback"))
+        row.addWidget(self.rollback_button)
+        updates.body.addLayout(row)
+        layout.addWidget(updates)
         layout.addStretch(1)
         return widget
+
+    def _updates(self, action: str) -> None:
+        """Usa el mismo proceso que la franja de arriba de la ventana."""
+        controller = getattr(self.window(), "updates", None)
+        if controller is None:
+            return
+        if action == "check":
+            controller.check(quiet=False)
+        elif action == "update":
+            controller.update()
+        else:
+            controller.rollback()
 
     # ------------------------------------------------------------------
     def refresh(self) -> None:
@@ -618,6 +650,19 @@ class SettingsView(BaseView):
             f"Este programa debe usarse respetando los términos de Wallapop y la "
             f"autorización de automatización concedida al titular de las cuentas."
         )
+        updater = getattr(self.app, "updater", None)
+        if updater is not None and updater.supported:
+            self.version_label.setText(
+                f"Versión instalada: {updater.current_version()}.<br>"
+                "LOT Bot mira solo si hay versiones nuevas al abrirse y cada pocas horas; "
+                "cuando hay una, sale un aviso arriba con el botón «Actualizar»."
+            )
+            self.rollback_button.setEnabled(bool(updater.previous_version()))
+        else:
+            reason = updater.unsupported_reason() if updater is not None else ""
+            self.version_label.setText(f"Versión instalada: {self.app.version}. {reason}")
+            for button in (self.check_updates_button, self.apply_update_button, self.rollback_button):
+                button.setEnabled(False)
 
     # ------------------------------------------------------------------
     def _refresh_templates(self) -> None:

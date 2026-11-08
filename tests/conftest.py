@@ -13,6 +13,9 @@ from pathlib import Path
 import pytest
 from cryptography.fernet import Fernet
 
+# Las pruebas nunca consultan GitHub para buscar actualizaciones.
+os.environ["LOT_BOT_UPDATE_CHECK"] = "0"
+
 from lot_bot.config.paths import build_paths, set_paths
 from lot_bot.config.secrets import SecretBox, reset_secret_box
 from lot_bot.config.settings import Settings
