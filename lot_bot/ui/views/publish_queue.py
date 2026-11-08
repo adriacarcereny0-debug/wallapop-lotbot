@@ -150,6 +150,8 @@ class PublishQueueView(BaseView):
                 f"{names}. Complétala en su ventana de Chrome; LOT Bot sigue solo al terminar"
                 + (" (mientras tanto, publica en las demás cuentas)." if others else ".")
             )
+        for note in queue.pacing_notes():
+            lines.append(f"<span style='color:{theme.TEXT_MUTED}'>{note}</span>")
         if progress.status == "paused" and progress.pause_reason:
             lines.append(f"<b style='color:{theme.WARNING}'>En pausa:</b> {progress.pause_reason}")
         self.summary.setText("<br>".join(lines))

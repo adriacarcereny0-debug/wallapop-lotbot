@@ -170,7 +170,7 @@ class AutomationScheduler:
             return
         self._unschedule(job_key)
         self._scheduler.add_job(
-            self.run_now,
+            self.run_scheduled,
             trigger=IntervalTrigger(minutes=max(1, minutes)),
             args=[job_key],
             id=f"lot-bot:{job_key}",
@@ -186,6 +186,22 @@ class AutomationScheduler:
             pass
 
     # ------------------------------------------------------------------
+    def run_scheduled(self, job_key: str) -> JobResult:
+        """Ejecución programada. Las tareas que abren Wallapop esperan a la
+        siguiente vuelta si hay una cola publicando: no se mete ninguna
+        lectura entre anuncio y anuncio."""
+        definition = JOBS_BY_KEY.get(job_key)
+        queue = getattr(self._app, "publish_queue", None)
+        busy = getattr(queue, "is_publishing", None)
+        if definition is not None and definition.uses_wallapop and callable(busy) and busy():
+            result = JobResult(
+                True, "Aplazada: hay una cola publicando. Se hará en la siguiente vuelta."
+            )
+            self._store_result(job_key, result)
+            logger.info("Automatización '%s' aplazada: hay una cola publicando.", job_key)
+            return result
+        return self.run_now(job_key)
+
     def run_now(self, job_key: str) -> JobResult:
         """Ejecuta una automatizacion inmediatamente."""
         definition = JOBS_BY_KEY.get(job_key)

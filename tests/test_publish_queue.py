@@ -180,9 +180,11 @@ def test_si_falla_el_reintento_queda_fallido_y_la_cola_se_pausa(app, monkeypatch
     job = queue.enqueue_master(None, refs(app), copies=5, generate_images=False)
     queue.run_until_idle()
     progress = queue.progress(job)
-    # Fallan 3 seguidos (1 con su reintento): algo va mal y se para.
+    # Fallan 3 seguidos: algo va mal y se para. (El reintento de un anuncio
+    # respeta el ritmo de su cuenta, así que antes se prueba en las demás.)
     assert progress.status == "paused"  # no sigue sin control
-    assert progress.failed >= 1 and progress.pending >= 2
+    assert progress.published == 0 and progress.pending >= 2
+    assert sum(1 for t in progress.tasks if t["codigo_error"] == "ValidationRejectedError") == 3
     assert "anuncios seguidos" in progress.pause_reason
 
 

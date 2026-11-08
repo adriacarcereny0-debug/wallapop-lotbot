@@ -39,7 +39,7 @@ from lot_bot.publishing.service import (
 from lot_bot.templates_engine.engine import TemplateEngine
 from lot_bot.wallapop.capabilities import Capability
 from lot_bot.wallapop.dto import ItemDraft
-from lot_bot.wallapop.errors import WallapopError
+from lot_bot.wallapop.errors import VerificationDeferredError, WallapopError
 from lot_bot.wallapop.service import WallapopService
 
 logger = logging.getLogger(__name__)
@@ -725,13 +725,24 @@ class MasterAdService:
         try:
             result = self._wallapop.create_item(preview.account_ref, draft)
         except WallapopError as exc:
-            self._audit.record_error(
-                "Publicación del anuncio principal",
-                error=f"{type(exc).__name__}: {exc.detail}",
-                account_ref=preview.account_ref,
-                target=view.name,
-                actor=actor,
-            )
+            if isinstance(exc, VerificationDeferredError):
+                # No es un fallo: se publicará cuando la persona complete la
+                # verificación de Wallapop en esa cuenta.
+                self._audit.record_cancelled(
+                    "Publicación aplazada: Wallapop pide una verificación",
+                    account_ref=preview.account_ref,
+                    target=view.name,
+                    detail=exc.user_message,
+                    actor=actor,
+                )
+            else:
+                self._audit.record_error(
+                    "Publicación del anuncio principal",
+                    error=f"{type(exc).__name__}: {exc.detail}",
+                    account_ref=preview.account_ref,
+                    target=view.name,
+                    actor=actor,
+                )
             return PublishOutcome(
                 product_sku=preview.product_sku,
                 account_ref=preview.account_ref,

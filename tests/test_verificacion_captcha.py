@@ -191,6 +191,12 @@ def test_captcha_en_una_cuenta_las_demas_siguen_publicando(listo):  # noqa: F811
     assert cola.pending_verifications() == []
     assert all(t["intentos"] == 1 for t in progreso.tasks)  # aplazar no cuenta como intento
     assert all(t["error"] is None for t in progreso.tasks)
+    historial = app.audit.recent(limit=200)
+    assert any("aplazada" in e.action for e in historial)
+    assert not any(  # aplazar no es un fallo: no sale como error en el historial
+        e.result == "error" and e.action.startswith("Publicación del anuncio principal")
+        for e in historial
+    )
 
 
 def test_si_la_cuenta_con_captcha_es_la_unica_se_espera_y_sigue_sola(listo):  # noqa: F811

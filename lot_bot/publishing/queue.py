@@ -24,6 +24,22 @@ REGLAS
   verificación se hace después (solo si aún no se había pulsado «Publicar»).
 * Tres fallos seguidos pausan la cola.
 
+RITMO POR CUENTA (para que Wallapop pida menos verificaciones)
+--------------------------------------------------------------
+Además del intervalo entre CUALQUIER par de anuncios, cada cuenta va a su
+propio ritmo, como un vendedor normal (sin trucos para ocultar el bot):
+
+* Entre dos anuncios de la MISMA cuenta pasan al menos
+  `account_interval_seconds` (5 min por defecto). Con varias cuentas se van
+  alternando, así que en total se publica igual de rápido.
+* Tras `batch_size` anuncios seguidos en una cuenta, esa cuenta descansa
+  `batch_rest_minutes`; las demás siguen.
+* Si Wallapop pide una verificación en una cuenta, durante `slowdown_hours`
+  esa cuenta espera el doble entre anuncios.
+* «Tus productos» se lee al EMPEZAR la cola (para el máximo de anuncios) y los
+  anuncios sin confirmar se comprueban al TERMINAR: nada de lecturas extra
+  entre anuncio y anuncio (salvo que fallen varios seguidos).
+
 PRUEBAS
 -------
 El reloj se puede sustituir (`clock=`) para que las pruebas no esperen 60
@@ -74,7 +90,31 @@ DEFAULT_PUBLISH_SETTINGS: dict[str, Any] = {
     # Máximo de anuncios por cuenta (0 = sin límite). Al llegar, se eliminan
     # los MÁS ANTIGUOS para dejar sitio al nuevo.
     "max_listings_per_account": 0,
+    # Ritmo por cuenta (ver RITMO POR CUENTA).
+    "account_interval_seconds": 300,
+    "batch_size": 10,  # 0 = sin descansos
+    "batch_rest_minutes": 20,
+    "slowdown_hours": 3,  # 0 = no ir más despacio tras una verificación
 }
+#: Valores admitidos (mínimo, máximo) de los ajustes de ritmo.
+PACING_LIMITS: dict[str, tuple[int, int]] = {
+    "account_interval_seconds": (MINIMUM_PUBLISH_INTERVAL_SECONDS, 7200),
+    "batch_size": (0, 500),
+    "batch_rest_minutes": (0, 600),
+    "slowdown_hours": (0, 48),
+}
+#: Tras una verificación, la cuenta espera este múltiplo de su intervalo.
+SLOWDOWN_FACTOR = 2
+
+
+def _clamp_pacing(values: dict[str, Any]) -> dict[str, Any]:
+    for key, (low, high) in PACING_LIMITS.items():
+        try:
+            number = int(values.get(key, DEFAULT_PUBLISH_SETTINGS[key]))
+        except (TypeError, ValueError):
+            number = int(DEFAULT_PUBLISH_SETTINGS[key])
+        values[key] = max(low, min(high, number))
+    return values
 
 #: Solo lo que tiene que hacer una PERSONA pausa la cola y pide «Continuar»
 #: (verificación, iniciar sesión, cerrar Chrome, claves...). Nunca se salta.
@@ -266,6 +306,12 @@ class PublishQueue:
         self._last_verification_poll = 0.0
         #: Cuentas cuya ventana hay que volver a poner delante (botón del aviso).
         self._focus_requests: set[str] = set()
+        #: Ritmo por cuenta (reloj de la cola): último intento, anuncios
+        #: seguidos, descanso hasta y «más despacio» hasta.
+        self._account_last: dict[str, float] = {}
+        self._account_streak: dict[str, int] = {}
+        self._account_rest_until: dict[str, float] = {}
+        self._account_slow_until: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Configuración
@@ -281,7 +327,7 @@ class PublishQueue:
             )
         except ValueError:
             values["minimum_publish_interval_seconds"] = MINIMUM_PUBLISH_INTERVAL_SECONDS
-        return values
+        return _clamp_pacing(values)
 
     def save_settings(self, **changes: Any) -> dict[str, Any]:
         if "minimum_publish_interval_seconds" in changes:
@@ -290,7 +336,7 @@ class PublishQueue:
             )
         if "automatic_retries" in changes:
             changes["automatic_retries"] = max(0, min(3, int(changes["automatic_retries"])))
-        merged = {**self.settings(), **changes}
+        merged = _clamp_pacing({**self.settings(), **changes})
         with self._db.session_scope() as session:
             row = session.get(Setting, SETTINGS_KEY)
             if row is None:
@@ -546,7 +592,10 @@ class PublishQueue:
             last_attempt = self._last_publish_ts()
             next_allowed = None
             if job.status is PublishJobStatus.RUNNING and last_attempt is not None:
-                next_allowed = datetime.fromtimestamp(last_attempt + job.interval_seconds)
+                ts = last_attempt + job.interval_seconds
+                if current is not None:
+                    ts = max(ts, self.account_ready_ts(current.account_ref))
+                next_allowed = datetime.fromtimestamp(ts)
             return QueueProgress(
                 job_id=job.id,
                 name=job.name,
@@ -636,6 +685,15 @@ class PublishQueue:
                 self._wake.wait(2.0)
                 self._wake.clear()
 
+    def is_publishing(self) -> bool:
+        """¿Hay una cola en marcha (o esperando a la persona)?"""
+        with self._db.session_scope() as session:
+            return session.scalar(
+                select(func.count(PublishJob.id)).where(
+                    PublishJob.status == PublishJobStatus.RUNNING
+                )
+            ) > 0 or bool(self.verifying_accounts())
+
     def _active_job(self) -> int | None:
         with self._db.session_scope() as session:
             return session.scalar(
@@ -676,14 +734,12 @@ class PublishQueue:
                 # Las cuentas no conectadas (p. ej. desconectadas por el usuario)
                 # y las que esperan una verificación esperan; las demás siguen.
                 verifying = self.verifying_accounts()
-                task = next(
-                    (
-                        t
-                        for t in pending
-                        if t.account_ref not in verifying and self._account_usable(t.account_ref)
-                    ),
-                    None,
-                )
+                candidates = [
+                    t
+                    for t in pending
+                    if t.account_ref not in verifying and self._account_usable(t.account_ref)
+                ]
+                task = self._pick_by_pace(candidates)
                 waiting = sorted({t.account_ref for t in pending}) if pending and task is None else []
                 only_verifying = bool(waiting) and all(r in verifying for r in waiting)
                 blocked = [] if only_verifying else [r for r in waiting if r not in verifying]
@@ -717,6 +773,9 @@ class PublishQueue:
                 )
                 return True
             if job_done:
+                # Los que Wallapop no confirmó se buscan ahora en «Tus
+                # productos» (una lectura por cuenta, al final de la cola).
+                self._confirm_unconfirmed(job_id)
                 self._set_job(job_id, PublishJobStatus.COMPLETED)
                 self._audit.record_success(
                     "Cola de publicación terminada", detail=self.progress(job_id).name
@@ -738,7 +797,7 @@ class PublishQueue:
                 service.user_gate = self._user_gate
             self._current_job = job_id
             self._make_room(job_id, ref)
-            wait = self.next_allowed_ts(interval, attempts) - self.clock.now()
+            wait = self._ready_ts(ref, interval, attempts) - self.clock.now()
             while wait > 0:
                 self._poll_verifications()
                 self.clock.sleep(min(wait, 1.0), self._stop)
@@ -750,7 +809,7 @@ class PublishQueue:
                     if status is PublishJobStatus.PAUSED:
                         self._set_task(task_id, status=PublishTaskStatus.PENDING)
                     return True
-                wait = self.next_allowed_ts(interval, attempts) - self.clock.now()
+                wait = self._ready_ts(ref, interval, attempts) - self.clock.now()
 
             # 3. Publicar.
             self._set_task(
@@ -760,6 +819,7 @@ class PublishQueue:
                 attempts=attempts + 1,
             )
             self._last_attempt = self.clock.now()
+            self._account_attempted(ref)
             self._current_job = job_id
             service = getattr(self._app, "wallapop", None)
             if service is not None and hasattr(service, "user_gate"):
@@ -811,18 +871,11 @@ class PublishQueue:
                     error=None,
                     error_code=None,
                 )
-            elif outcome.error_code == UNCONFIRMED_CODE and self._appears_in_catalog(task_id, ref):
+            elif outcome.error_code == UNCONFIRMED_CODE and self._unconfirmed_found_now(
+                task_id, job_id, ref, outcome.message, photo_key
+            ):
                 # Wallapop no lo confirmó en pantalla, pero está en «Tus productos».
                 self._consecutive_failures = 0
-                self._set_task(
-                    task_id,
-                    status=PublishTaskStatus.PUBLISHED,
-                    published_at=datetime.fromtimestamp(self.clock.now()),
-                    error=None,
-                    error_code=None,
-                )
-                if photo_key:
-                    self.mark_photo_used(photo_key, ref)
             else:
                 self._fail(
                     task_id, job_id, attempts + 1, outcome.error_code or "ERROR", outcome.message
@@ -852,9 +905,22 @@ class PublishQueue:
             return
         from lot_bot.publishing.listings import ListingFilter
 
-        # La primera vez en esta cola se lee la lista real de la cuenta (solo
-        # se mira la lista «Tus productos»; no se entra en ningún anuncio).
+        # Al EMPEZAR la cola se lee la lista real de TODAS sus cuentas (solo
+        # «Tus productos»; no se entra en ningún anuncio): así no hay lecturas
+        # entre anuncio y anuncio. Después se cuenta con lo que se publica.
         synced = self.__dict__.setdefault("_room_synced", set())
+        started = self.__dict__.setdefault("_room_started", set())
+        if job_id not in started:
+            started.add(job_id)
+            for other in self._job_accounts(job_id):
+                if other == account_ref or (job_id, other) in synced:
+                    continue
+                synced.add((job_id, other))
+                try:
+                    listings.sync_account(other)
+                except Exception as exc:  # se volverá a probar con su primer anuncio
+                    synced.discard((job_id, other))
+                    logger.warning("No se ha podido leer la lista de %s: %s", other, exc)
         if (job_id, account_ref) not in synced:
             synced.add((job_id, account_ref))
             try:
@@ -902,40 +968,202 @@ class PublishQueue:
         if failed:
             logger.warning("No se han podido eliminar %d antiguos: %s", len(failed), failed[0].message)
 
-    def _appears_in_catalog(self, task_id: int, account_ref: str) -> bool:
-        """¿El anuncio sin confirmar está en la lista «Tus productos»? Se
-        compara cuántos hay con ese título en Wallapop y cuántos conoce LOT
-        Bot: si Wallapop tiene uno más, se publicó (y se registra)."""
+    def _job_accounts(self, job_id: int) -> list[str]:
+        """Cuentas con anuncios pendientes en la cola (en orden)."""
+        with self._db.session_scope() as session:
+            refs = session.scalars(
+                select(PublishTask.account_ref)
+                .where(
+                    PublishTask.job_id == job_id,
+                    PublishTask.status == PublishTaskStatus.PENDING,
+                )
+                .order_by(PublishTask.position)
+            ).all()
+        seen: list[str] = []
+        for ref in refs:
+            if ref not in seen and self._account_usable(ref):
+                seen.append(ref)
+        return seen
+
+    def _confirm_unconfirmed(self, job_id: int, account_ref: str | None = None) -> int:
+        """Al terminar la cola: los anuncios que Wallapop no confirmó en
+        pantalla se buscan en «Tus productos» (UNA lectura por cuenta). Si
+        Wallapop tiene más con ese título de los que conoce LOT Bot, se
+        publicaron. Devuelve cuántos se han confirmado así."""
         from lot_bot.publishing.listings import ListingFilter, _norm_text
         from lot_bot.wallapop.capabilities import Capability
 
         service = getattr(self._app, "wallapop", None)
         listings = getattr(self._app, "listings", None)
         if service is None or listings is None:
-            return False
+            return 0
+        with self._db.session_scope() as session:
+            query = select(PublishTask.id, PublishTask.account_ref, PublishTask.title).where(
+                PublishTask.job_id == job_id,
+                PublishTask.status == PublishTaskStatus.UNCONFIRMED,
+            )
+            if account_ref is not None:
+                query = query.where(PublishTask.account_ref == account_ref)
+            rows = session.execute(query.order_by(PublishTask.position)).all()
+        if not rows:
+            return 0
         try:
             if Capability.LIST_ITEMS not in service.capabilities():
-                return False
-            with self._db.session_scope() as session:
-                title = session.get(PublishTask, task_id).title or ""
-            wanted = _norm_text(title)
-            if not wanted:
-                return False
-            remote = sum(
-                1 for item in service.list_items(account_ref, limit=500)
-                if wanted in _norm_text(item.raw.get("texto") or item.title)
+                return 0
+        except Exception:
+            return 0
+        by_account: dict[str, list[tuple[int, str]]] = {}
+        for task_id, ref, title in rows:
+            by_account.setdefault(ref, []).append((task_id, _norm_text(title or "")))
+        confirmed = 0
+        for ref, tasks in by_account.items():
+            try:
+                remote = [
+                    _norm_text(item.raw.get("texto") or item.title)
+                    for item in service.list_items(ref, limit=500)
+                ]
+                local = [
+                    _norm_text(v.title)
+                    for v in listings.search(ListingFilter(account_ref=ref, limit=5000))
+                    if v.status != "removed"
+                ]
+            except Exception as exc:  # comprobar nunca rompe la cola
+                logger.warning("No se ha podido comprobar en «Tus productos»: %s", exc)
+                continue
+            found: list[int] = []
+            for wanted in {title for _, title in tasks if title}:
+                extra = sum(1 for t in remote if wanted in t) - sum(1 for t in local if t == wanted)
+                group = [task_id for task_id, title in tasks if title == wanted]
+                found.extend(group[: max(0, extra)])
+            for task_id in found:
+                self._set_task(
+                    task_id,
+                    status=PublishTaskStatus.PUBLISHED,
+                    published_at=datetime.fromtimestamp(self.clock.now()),
+                    error=None,
+                    error_code=None,
+                )
+            if found:
+                confirmed += len(found)
+                try:
+                    listings.sync_account(ref)  # quedan en «Anuncios» con su dirección
+                except Exception as exc:
+                    logger.warning("No se ha podido leer la lista de %s: %s", ref, exc)
+        if confirmed:
+            self._audit.record_success(
+                "Anuncios sin confirmar encontrados en «Tus productos»",
+                detail=f"Cola {job_id}: {confirmed} publicado(s)",
             )
-            local = sum(
-                1 for v in listings.search(ListingFilter(account_ref=account_ref, limit=5000))
-                if v.status != "removed" and _norm_text(v.title) == wanted
+        return confirmed
+
+    # ------------------------------------------------------------------
+    # Ritmo por cuenta
+    # ------------------------------------------------------------------
+    def _account_last_ts(self, ref: str) -> float | None:
+        if ref in self._account_last:
+            return self._account_last[ref]
+        if not self.clock.is_real:
+            return None
+        with self._db.session_scope() as session:
+            last = session.scalar(
+                select(func.max(PublishTask.started_at)).where(PublishTask.account_ref == ref)
             )
-            if remote <= local:
-                return False
-            listings.sync_account(account_ref)  # queda en «Anuncios» con su dirección
-            return True
-        except Exception as exc:  # comprobar nunca rompe la cola
-            logger.warning("No se ha podido comprobar en «Tus productos»: %s", exc)
+        return last.timestamp() if last is not None else None
+
+    def account_ready_ts(self, ref: str, settings: dict[str, Any] | None = None) -> float:
+        """Cuándo puede volver a publicar esta cuenta según SU ritmo."""
+        settings = settings or self.settings()
+        now = self.clock.now()
+        ready = now
+        last = self._account_last_ts(ref)
+        if last is not None:
+            gap = float(settings["account_interval_seconds"])
+            if self._account_slow_until.get(ref, 0.0) > now:
+                gap *= SLOWDOWN_FACTOR
+            ready = max(ready, last + gap)
+        return max(ready, self._account_rest_until.get(ref, 0.0))
+
+    def _ready_ts(self, ref: str, interval: int | None, attempts: int) -> float:
+        return max(self.next_allowed_ts(interval, attempts), self.account_ready_ts(ref))
+
+    def _pick_by_pace(self, candidates: list[Any]) -> Any:
+        """El primer anuncio cuya cuenta ya puede publicar; si ninguna puede,
+        el de la cuenta que antes podrá (las demás no se quedan esperando)."""
+        if not candidates:
+            return None
+        settings = self.settings()
+        now = self.clock.now()
+        ready: dict[str, float] = {}
+        for task in candidates:
+            if task.account_ref not in ready:
+                ready[task.account_ref] = self.account_ready_ts(task.account_ref, settings)
+            if ready[task.account_ref] <= now:
+                return task
+        return min(candidates, key=lambda t: (ready[t.account_ref], t.position))
+
+    def _account_attempted(self, ref: str) -> None:
+        """Se va a publicar en `ref`: cuenta para el ritmo y los descansos."""
+        settings = self.settings()
+        now = self.clock.now()
+        last = self._account_last_ts(ref)
+        rest_s = int(settings["batch_rest_minutes"]) * 60
+        streak = self._account_streak.get(ref, 0)
+        if last is not None and rest_s and now - last >= rest_s:
+            streak = 0  # ya ha descansado lo suyo por su cuenta
+        streak += 1
+        self._account_last[ref] = now
+        batch = int(settings["batch_size"])
+        if batch and rest_s and streak >= batch:
+            self._account_rest_until[ref] = now + rest_s
+            streak = 0
+            logger.info("%s: %d anuncios seguidos; descansa %d min.", ref, batch, rest_s // 60)
+        self._account_streak[ref] = streak
+
+    def _slow_down(self, ref: str) -> None:
+        """Wallapop ha pedido una verificación: esta cuenta va más despacio."""
+        hours = int(self.settings()["slowdown_hours"])
+        if hours > 0:
+            self._account_slow_until[ref] = self.clock.now() + hours * 3600
+
+    def pacing_notes(self) -> list[str]:
+        """Qué cuentas descansan o van más despacio ahora (para la pantalla)."""
+        now = self.clock.now()
+        refs = set(self._account_rest_until) | set(self._account_slow_until)
+        if not refs:
+            return []
+        aliases = {a.internal_ref: a.alias for a in self._app.accounts.list_accounts()}
+        notes = []
+        for ref in sorted(refs):
+            name = aliases.get(ref, ref)
+            rest = self._account_rest_until.get(ref, 0.0)
+            if rest > now:
+                notes.append(
+                    f"«{name}» descansa hasta las {datetime.fromtimestamp(rest):%H:%M} "
+                    "(tras varios anuncios seguidos); las demás cuentas siguen."
+                )
+            slow = self._account_slow_until.get(ref, 0.0)
+            if slow > now:
+                notes.append(
+                    f"«{name}» publica más despacio hasta las "
+                    f"{datetime.fromtimestamp(slow):%H:%M} (Wallapop pidió una verificación)."
+                )
+        return notes
+
+    def _unconfirmed_found_now(
+        self, task_id: int, job_id: int, ref: str, message: str, photo_key: str | None
+    ) -> bool:
+        """Anuncio sin confirmar. Normalmente se comprueba al FINAL de la cola
+        (sin lecturas entre anuncios). Solo si ya van varios fallos seguidos
+        (la cola se pausaría) se mira ahora «Tus productos» de esa cuenta."""
+        if photo_key:
+            self.mark_photo_used(photo_key, ref)  # pudo publicarse: no se repite
+        if self._consecutive_failures + 1 < MAX_CONSECUTIVE_FAILURES:
             return False
+        self._set_task(task_id, status=PublishTaskStatus.UNCONFIRMED, error=message[:1000],
+                       error_code=UNCONFIRMED_CODE)
+        self._confirm_unconfirmed(job_id, account_ref=ref)
+        with self._db.session_scope() as session:
+            return session.get(PublishTask, task_id).status is PublishTaskStatus.PUBLISHED
 
     # ------------------------------------------------------------------
     def _generate_image(
@@ -1087,6 +1315,8 @@ class PublishQueue:
             target=title,
         )
         self._consecutive_failures += 1
+        if code == "VerificationRequiredError":
+            self._slow_down(ref)
         if pausing:
             self.pause(job_id, message)
         elif self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
@@ -1218,6 +1448,7 @@ class PublishQueue:
             return False
 
     def _verification_started(self, ref: str, job_id: int, *, deferred: bool) -> None:
+        self._slow_down(ref)
         with self._verifying_lock:
             new = ref not in self._verifying
             self._verifying[ref] = {

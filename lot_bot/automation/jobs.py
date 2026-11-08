@@ -41,6 +41,9 @@ class JobDefinition:
     default_interval_minutes: int
     writes: bool
     run: Callable[[Application, dict[str, Any]], JobResult]
+    #: Abre páginas de Wallapop: si está programada, no se ejecuta mientras
+    #: una cola publica (menos visitas = menos verificaciones).
+    uses_wallapop: bool = False
 
     @property
     def safety_note(self) -> str:
@@ -242,6 +245,7 @@ JOB_DEFINITIONS: list[JobDefinition] = [
         default_interval_minutes=60,
         writes=False,
         run=job_sync_listings,
+        uses_wallapop=True,
     ),
     JobDefinition(
         key="sync_messages",
@@ -250,6 +254,7 @@ JOB_DEFINITIONS: list[JobDefinition] = [
         default_interval_minutes=15,
         writes=False,
         run=job_sync_messages,
+        uses_wallapop=True,
     ),
     JobDefinition(
         key="quality_review",

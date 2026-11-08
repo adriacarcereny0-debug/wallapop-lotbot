@@ -372,8 +372,48 @@ class SettingsView(BaseView):
             lambda value: self.app.publish_queue.save_settings(max_listings_per_account=value)
         )
         form.addRow("Máximo de anuncios por cuenta\n(borra los más antiguos)", self.max_listings)
+
+        # Ritmo por cuenta: menos visitas seguidas = menos verificaciones.
+        def pace_box(key, low, high, suffix, special=None, tip=""):
+            box = QSpinBox()
+            box.setRange(low, high)
+            box.setSuffix(suffix)
+            if special:
+                box.setSpecialValueText(special)
+            box.setToolTip(tip)
+            box.valueChanged.connect(
+                lambda value: self.app.publish_queue.save_settings(**{key: value})
+            )
+            return box
+
+        self.account_interval = pace_box(
+            "account_interval_seconds", 60, 7200, " s",
+            tip="Tiempo mínimo entre dos anuncios de la MISMA cuenta. Con varias cuentas se "
+            "alternan, así que en total se publica igual de rápido.",
+        )
+        form.addRow("Espera entre anuncios de la misma cuenta", self.account_interval)
+        self.batch_size = pace_box(
+            "batch_size", 0, 500, " anuncios", special="Sin descansos",
+            tip="Tras estos anuncios seguidos, la cuenta descansa (las demás siguen).",
+        )
+        form.addRow("Descanso de la cuenta tras", self.batch_size)
+        self.batch_rest = pace_box("batch_rest_minutes", 0, 600, " min", special="Sin descanso")
+        form.addRow("Duración del descanso", self.batch_rest)
+        self.slowdown_hours = pace_box(
+            "slowdown_hours", 0, 48, " h", special="No",
+            tip="Si Wallapop pide una verificación en una cuenta, esa cuenta espera el doble "
+            "entre anuncios durante este tiempo.",
+        )
+        form.addRow("Tras una verificación, ir más\ndespacio en esa cuenta durante", self.slowdown_hours)
+        self._pace_boxes = {
+            "account_interval_seconds": self.account_interval,
+            "batch_size": self.batch_size,
+            "batch_rest_minutes": self.batch_rest,
+            "slowdown_hours": self.slowdown_hours,
+        }
         _fixed_height(
-            self.integration_mode, self.publish_interval, self.publish_images, self.max_listings
+            self.integration_mode, self.publish_interval, self.publish_images, self.max_listings,
+            *self._pace_boxes.values(),
         )
         integration.body.addLayout(form)
         integration_note = QLabel(
@@ -498,6 +538,10 @@ class SettingsView(BaseView):
         self.max_listings.blockSignals(True)
         self.max_listings.setValue(int(queue_settings.get("max_listings_per_account") or 0))
         self.max_listings.blockSignals(False)
+        for key, box in self._pace_boxes.items():
+            box.blockSignals(True)  # mostrar no es cambiar: no se guarda
+            box.setValue(int(queue_settings[key]))
+            box.blockSignals(False)
         used = len(self.app.publish_queue.used_photos())
         self.used_photos_label.setText(f"Fotos ya publicadas (no se repiten): {used}")
         from lot_bot.wallapop.browser.config import local_config_path
