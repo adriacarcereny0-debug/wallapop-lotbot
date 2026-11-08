@@ -925,7 +925,7 @@ class ListingForm:
             raise self._fail(
                 step,
                 "No hay ninguna foto preparada para este anuncio (sube una en «Anuncio "
-                "principal → Fotografías» o activa FLUX).",
+                "principal → Fotografías» o en «Imágenes»).",
             )
         images = self.prepare_images(images)
         thumbs = self.form.photo_thumbnails

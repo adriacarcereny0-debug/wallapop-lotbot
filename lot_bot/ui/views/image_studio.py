@@ -1,9 +1,8 @@
-"""Pantalla «Imágenes / IA»: elegir una imagen y decidir qué hacer con ella.
+"""Pantalla «Imágenes»: tus fotos, subidas desde el ordenador.
 
-Acciones: Generar, Mejorar, Cambiar estilo, Cambiar habitación y Usar como
-referencia. Todas crean una imagen NUEVA (la original no se toca) y pasan por
-la detección de imágenes repetidas. Lo que consume créditos de FLUX pide
-confirmación.
+Solo se suben fotos (una, varias, una carpeta o arrastrándolas). Se guardan en
+la carpeta de datos de LOT Bot, en este ordenador, y se pueden usar en los
+anuncios. No hay generación de imágenes con IA.
 """
 
 from __future__ import annotations
@@ -13,26 +12,16 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QComboBox,
     QFileDialog,
-    QFormLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QVBoxLayout,
 )
 
-from lot_bot.images.generation import GenerationError, spec_from_master
-from lot_bot.images.generation.prompts import (
-    LIGHT_LABELS,
-    OPERATIONS,
-    ROOM_LABELS,
-    STYLE_LABELS,
-    spec_from_text,
-)
+from lot_bot.images.generation import GenerationError
+from lot_bot.images.generation.prompts import OPERATIONS
 from lot_bot.ui import theme
 from lot_bot.ui.views.base import BaseView
 from lot_bot.ui.widgets.common import Card, SectionTitle, ask_confirmation, info_box, show_error
@@ -56,24 +45,26 @@ def use_image_in_ads(app, path: str) -> bool:
 
 
 class ImageStudioView(BaseView):
-    title = "Imágenes / IA"
-    subtitle = "Elige una imagen y qué hacer con ella. La original nunca se modifica"
+    title = "Imágenes"
+    subtitle = "Tus fotos, subidas desde el ordenador. Se guardan en LOT Bot"
 
     def build(self) -> None:
-        self.add_header_button("Subir foto propia…", self._upload)
-        self.add_header_button("Subir carpeta completa…", self._upload_folder)
-        self.add_header_button("Actualizar", self.refresh)
-        # También se pueden ARRASTRAR fotos (o una carpeta) desde Windows.
+        self.add_header_button("Subir fotos…", self._upload, primary=True)
+        self.add_header_button("Subir carpeta…", self._upload_folder)
+        # También se pueden ARRASTRAR fotos (o una carpeta) a esta pantalla.
         self.setAcceptDrops(True)
 
-        self.notice = QLabel()
+        self.notice = QLabel(
+            "Elige fotos JPG, PNG o WEBP de tu ordenador, o arrástralas aquí. Se guarda una "
+            "copia en la carpeta de LOT Bot, así que puedes mover o borrar las originales."
+        )
         self.notice.setWordWrap(True)
         self.notice.setStyleSheet(f"color: {theme.TEXT_MUTED};")
         self.body.addWidget(self.notice)
 
         columns = QHBoxLayout()
         list_card = Card()
-        list_card.add(SectionTitle("Imágenes"))
+        list_card.add(SectionTitle("Tus fotos"))
         self.images = QListWidget()
         # Varias a la vez: arrastrar con el ratón, Ctrl/Shift + clic o Ctrl+A.
         self.images.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
@@ -84,6 +75,7 @@ class ImageStudioView(BaseView):
         self.select_all_button = QPushButton("Seleccionar todas")
         self.select_all_button.clicked.connect(self.images.selectAll)
         list_buttons.addWidget(self.select_all_button)
+        list_buttons.addStretch(1)
         self.delete_button = QPushButton("Borrar seleccionadas")
         self.delete_button.setObjectName("Danger")
         self.delete_button.clicked.connect(self._delete_selected)
@@ -91,105 +83,44 @@ class ImageStudioView(BaseView):
         list_card.body.addLayout(list_buttons)
         columns.addWidget(list_card, 2)
 
-        right = QVBoxLayout()
         preview_card = Card()
-        self.preview = QLabel("Selecciona una imagen")
+        self.preview = QLabel("Selecciona una foto")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumSize(420, 300)
         preview_card.add(self.preview)
         self.info = QLabel()
         self.info.setWordWrap(True)
+        self.info.setStyleSheet(f"color: {theme.TEXT_MUTED};")
         preview_card.add(self.info)
-        right.addWidget(preview_card, 3)
-
-        actions = Card()
-        actions.add(SectionTitle("¿Qué quieres hacer?"))
-        form = QFormLayout()
-        self.product = QLineEdit()
-        self.product.setPlaceholderText(
-            "Opcional: qué producto es (p. ej. «canapé abatible gris de madera»). "
-            "Vacío = datos del anuncio principal"
-        )
-        self.room = QComboBox()
-        self.light = QComboBox()
-        self.style = QComboBox()
-        for combo, labels in (
-            (self.room, ROOM_LABELS),
-            (self.light, LIGHT_LABELS),
-            (self.style, STYLE_LABELS),
-        ):
-            combo.addItem("(sin indicar)", None)
-            for key, label in labels.items():
-                combo.addItem(label, key)
-        for widget in (self.product, self.room, self.light, self.style):
-            widget.setMinimumHeight(32)
-        form.addRow("Producto", self.product)
-        form.addRow("Habitación", self.room)
-        form.addRow("Luz", self.light)
-        form.addRow("Estilo", self.style)
-        actions.body.addLayout(form)
-
-        buttons = QHBoxLayout()
-        self.buttons: dict[str, QPushButton] = {}
-        for key in ("generar", "mejorar", "estilo", "habitacion", "referencia"):
-            button = QPushButton(OPERATIONS[key])
-            button.setMinimumHeight(34)
-            if key == "generar":
-                button.setObjectName("Primary")
-            button.clicked.connect(lambda _=False, k=key: self._run(k))
-            buttons.addWidget(button)
-            self.buttons[key] = button
-        actions.body.addLayout(buttons)
         use_row = QHBoxLayout()
+        use_row.addStretch(1)
         self.use_button = QPushButton("Usar en mis anuncios")
-        self.use_button.setMinimumHeight(34)
+        self.use_button.setObjectName("Primary")
         self.use_button.setToolTip(
-            "Añade la imagen elegida a las fotos del anuncio principal: se publicará con ella "
-            "(no hace falta clave de FLUX)."
+            "Añade la foto elegida a las fotos del anuncio principal: se publicará con ella."
         )
         self.use_button.clicked.connect(self._use_in_ads)
         use_row.addWidget(self.use_button)
-        use_row.addStretch(1)
-        actions.body.addLayout(use_row)
-        hint = QLabel(
-            "Generar: foto nueva desde cero · Mejorar: más resolución y nitidez (local, sin IA) · "
-            "Cambiar estilo / habitación: misma imagen, otro ambiente · Usar como referencia: "
-            "foto nueva basada en el producto de la imagen elegida."
-        )
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {theme.TEXT_FAINT}; font-size: 11px;")
-        actions.add(hint)
-        right.addWidget(actions, 2)
-        columns.addLayout(right, 3)
+        preview_card.body.addLayout(use_row)
+        columns.addWidget(preview_card, 3)
         self.body.addLayout(columns, 1)
 
     # ------------------------------------------------------------------
     def refresh(self) -> None:
-        generator = self.app.image_generation.generator
-        if generator.is_demo:
-            self.notice.setText(
-                "MODO DEMO: se crean imágenes de prueba locales, sin FLUX ni créditos."
-            )
-        else:
-            self.notice.setText(
-                f"Motor: {generator.name}. Generar, cambiar estilo, cambiar habitación y usar como "
-                f"referencia consumen créditos; «Mejorar» es local y gratuito."
-            )
         current = self._selected_id()
         self.images.clear()
         for info in self.app.image_generation.history(200):
             if not info["existe"]:
                 continue
-            scene = info["escena"] or {}
-            label = f"#{info['id']} · {OPERATION_NAMES.get(info['operacion'], info['operacion'])}"
-            if scene.get("habitacion"):
-                label += f" · {ROOM_LABELS.get(scene['habitacion'], '')}"
-            label += f" · {info['fecha']:%d/%m %H:%M}"
+            name = Path(info["ruta"]).name
+            label = f"{name} · {info['fecha']:%d/%m %H:%M}"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, info)
             self.images.addItem(item)
             if info["id"] == current:
                 self.images.setCurrentItem(item)
+        if not self.images.count():
+            self.preview.setText("Aún no has subido ninguna foto.\nPulsa «Subir fotos…» o arrástralas aquí.")
         self._show_selected()
         self._update_delete()
 
@@ -230,13 +161,11 @@ class ImageStudioView(BaseView):
 
     def _show_selected(self, *_):
         info = self._selected()
-        needs_image = ("mejorar", "estilo", "habitacion", "referencia")
-        for key in needs_image:
-            self.buttons[key].setEnabled(info is not None)
         if hasattr(self, "use_button"):
             self.use_button.setEnabled(info is not None)
         if info is None:
-            self.preview.setText("Selecciona una imagen o pulsa «Generar»")
+            if self.images.count():
+                self.preview.setText("Selecciona una foto")
             self.preview.setPixmap(QPixmap())
             self.info.setText("")
             return
@@ -250,91 +179,12 @@ class ImageStudioView(BaseView):
                     Qt.TransformationMode.SmoothTransformation,
                 )
             )
-        self.info.setText(
-            f"Imagen #{info['id']} · {OPERATION_NAMES.get(info['operacion'], info['operacion'])} · "
-            f"{info['proveedor']} · {Path(info['ruta']).name}"
+        origin = "Foto propia" if info["operacion"] == "propia" else OPERATION_NAMES.get(
+            info["operacion"], info["operacion"]
         )
+        self.info.setText(f"{Path(info['ruta']).name} · {origin} · {info['fecha']:%d/%m/%Y %H:%M}")
 
     # ------------------------------------------------------------------
-    def _scene(self) -> dict:
-        scene = {}
-        for key, combo in (("habitacion", self.room), ("luz", self.light), ("estilo", self.style)):
-            if combo.currentData():
-                scene[key] = combo.currentData()
-        return scene
-
-    def _spec(self):
-        text = self.product.text().strip()
-        if text:
-            return spec_from_text(text)
-        master = self.app.master_ads.get(None)
-        return spec_from_master(master) if master else None
-
-    def _run(self, operation: str) -> None:
-        info = self._selected()
-        scene = self._scene()
-        if operation == "estilo" and "estilo" not in scene:
-            show_error(self, "Elige primero el estilo.")
-            return
-        if operation == "habitacion" and "habitacion" not in scene:
-            show_error(self, "Elige primero la habitación.")
-            return
-        try:
-            spec = self._spec() if operation in ("generar",) or self.product.text().strip() else None
-        except ValueError as exc:
-            show_error(self, str(exc))
-            return
-        generator = self.app.image_generation.generator
-        if operation != "mejorar" and not generator.is_demo:
-            if not ask_confirmation(
-                self,
-                OPERATIONS[operation],
-                f"Se usará {generator.name} y se consumirán créditos de Black Forest Labs.\n\n"
-                f"El producto se mantiene tal cual; sin texto, precios, teléfonos, logos ni marcas.",
-            ):
-                return
-        service = self.app.image_generation
-
-        def work():
-            if operation == "generar":
-                return service.generate_unique(
-                    spec,
-                    variation=self.images.count(),
-                    subject=f"Imagen suelta: {spec.product_type}",
-                    scene={"habitacion": "dormitorio_blanco", "luz": "dia_luminoso",
-                           "angulo": "tres_cuartos_pie", "estilo": "natural", **scene}
-                    if scene
-                    else None,
-                    preferred_rooms=self.app.optimizer.preferred_rooms(),
-                )
-            if operation == "mejorar":
-                return service.enhance(Path(info["ruta"]))
-            return service.edit(operation, Path(info["ruta"]), scene=scene, spec=spec)
-
-        def success(result) -> None:
-            self.app.audit.record_success(
-                f"Imagen: {OPERATIONS[operation]}",
-                detail=f"{result.provider}; imagen {result.image_id}",
-            )
-            self.refresh()
-            for row in range(self.images.count()):
-                data = self.images.item(row).data(Qt.ItemDataRole.UserRole)
-                if data and data["id"] == result.image_id:
-                    self.images.setCurrentRow(row)
-                    break
-
-        def failed(message: str, _detail: str) -> None:
-            show_error(self, "No se ha podido crear la imagen.", message)
-
-        for button in self.buttons.values():
-            button.setEnabled(False)
-        self.runner.run(
-            work,
-            on_success=success,
-            on_error=failed,
-            on_done=lambda: self._show_selected() or self.buttons["generar"].setEnabled(True),
-        )
-
     def _use_in_ads(self) -> None:
         info = self._selected()
         if info is None:
@@ -356,7 +206,7 @@ class ImageStudioView(BaseView):
     def _upload(self) -> None:
         # Varias a la vez: Ctrl/Shift + clic, o Ctrl+A para toda la carpeta.
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Subir fotos propias (puedes elegir varias)", "",
+            self, "Subir fotos (puedes elegir varias)", "",
             "Imágenes (*.jpg *.jpeg *.png *.webp)",
         )
         self.upload_paths(paths)

@@ -129,7 +129,9 @@ def test_eliminar_anuncio_exige_confirmacion(app_with_data):
     assert app_with_data.listings.get(anuncio.id).status == "removed"
 
 
-def test_eliminar_varios_de_uno_en_uno_con_espera(app_with_data):
+def test_eliminar_varios_de_uno_en_uno_con_espera(app_with_data, monkeypatch):
+    # Como si fueran anuncios REALES (los de prueba se quitan sin esperar).
+    monkeypatch.setattr(app_with_data.publishing, "is_demo_listing", lambda _id: False)
     anuncios = app_with_data.listings.search(ListingFilter(limit=3))
     ids = [a.id for a in anuncios]
     with pytest.raises(ConfirmationRequiredError):

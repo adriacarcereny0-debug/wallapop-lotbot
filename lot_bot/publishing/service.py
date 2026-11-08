@@ -584,6 +584,27 @@ class PublishingService:
         if not confirmed:
             raise ConfirmationRequiredError("eliminar anuncio")
 
+        local = self._listings.get(listing_id)
+        if local is not None and self.is_demo_account(local.account_ref) and not getattr(
+            self._wallapop, "is_mock", False
+        ):
+            # Anuncio de una cuenta de PRUEBA: no existe en Wallapop. Se quita
+            # de LOT Bot al momento, sin abrir ningún navegador.
+            self._listings.mark_removed(listing_id)
+            self._audit.record_success(
+                "Eliminación de anuncio de prueba (DEMO)",
+                account_ref=local.account_ref,
+                target=local.title,
+                actor=actor,
+            )
+            return PublishOutcome(
+                product_sku=local.product_sku or "",
+                account_ref=local.account_ref,
+                success=True,
+                message="Anuncio de prueba quitado (no estaba en Wallapop).",
+                item_id=local.wallapop_item_id,
+            )
+
         try:
             view = self._with_url(listing_id, synced)
         except WallapopError as exc:
@@ -645,6 +666,22 @@ class PublishingService:
         "WindowClosedError",
     }
 
+    def is_demo_account(self, account_ref: str) -> bool:
+        from lot_bot.database.models import Account
+
+        with self._db.session_scope() as session:
+            return bool(
+                session.scalar(select(Account.is_demo).where(Account.internal_ref == account_ref))
+            )
+
+    def is_demo_listing(self, listing_id: int) -> bool:
+        """Anuncio de prueba: de una cuenta DEMO o en modo DEMO. Se borra al
+        momento, sin esperas entre uno y otro."""
+        if getattr(self._wallapop, "is_mock", False):
+            return True
+        view = self._listings.get(listing_id)
+        return view is not None and self.is_demo_account(view.account_ref)
+
     def delete_listings(
         self,
         listing_ids: list[int],
@@ -665,9 +702,11 @@ class PublishingService:
         sleep = sleep or _time.sleep
         outcomes: list[PublishOutcome] = []
         synced: set[str] = set()  # cada cuenta se lee una sola vez
+        waited_for: bool = False  # el anterior tocó Wallapop de verdad
         for position, listing_id in enumerate(listing_ids):
-            if position:
+            if position and waited_for and not self.is_demo_listing(listing_id):
                 sleep(interval_seconds)
+            waited_for = not self.is_demo_listing(listing_id)
             try:
                 outcome = self.delete_listing(
                     listing_id, confirmed=True, actor=actor, synced=synced

@@ -53,7 +53,7 @@ NAVIGATION = [
     ("Publicación automática", "publicacion", PublishQueueView),
     ("Anuncios (eliminar)", "anuncios", ListingsView),
     ("Estadísticas", "estadisticas", StatisticsView),
-    ("Imágenes / IA", "imagenes", ImageStudioView),
+    ("Imágenes", "imagenes", ImageStudioView),
     ("Anuncio principal", "principal", MasterAdView),
     ("Configuración", "configuracion", SettingsView),
     # --- Más ---
@@ -73,7 +73,7 @@ SHORT_LABELS = {
     "Publicación automática": "Publicar",
     "Anuncios (eliminar)": "Anuncios",
     "Estadísticas": "Estadíst.",
-    "Imágenes / IA": "Imágenes",
+    "Imágenes": "Imágenes",
     "Anuncio principal": "Principal",
     "Configuración": "Ajustes",
     "Panel": "Panel",

@@ -331,25 +331,6 @@ def test_flux_envia_la_imagen_de_referencia(tmp_path):
 # ---------------------------------------------------------------------------
 # Herramientas de la IA
 # ---------------------------------------------------------------------------
-def test_generar_imagen_desde_el_chat_pide_confirmacion(app):
-    respuesta = app.agent.ask("Genera una imagen")
-    assert respuesta.needs_confirmation
-    assert any("DEMO" in linea for linea in respuesta.pending.request.lines)
-    antes = len(app.image_generation.history())
-    app.agent.confirm(respuesta.pending.token)
-    assert len(app.image_generation.history()) == antes + 1
-
-
-def test_mejorar_y_cambiar_habitacion_desde_el_chat(app):
-    base = _una_imagen(app)
-    texto = " ".join(m.text for m in app.agent.ask(f"Mejora la imagen {base.image_id}").messages)
-    assert "mejorada" in texto
-    respuesta = app.agent.ask(f"Cambia la habitación de la imagen {base.image_id} a dormitorio beige")
-    assert respuesta.needs_confirmation
-    app.agent.confirm(respuesta.pending.token)
-    assert any(h["operacion"] == "habitacion" for h in app.image_generation.history())
-
-
 def test_estadisticas_desde_el_chat(app):
     publicar(app, 2)
     texto = " ".join(m.text for m in app.agent.ask("Estadísticas").messages)

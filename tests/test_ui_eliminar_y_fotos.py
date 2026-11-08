@@ -37,10 +37,27 @@ def test_seleccionar_todos_los_de_la_cuenta_y_eliminar_varios(qapp, app_with_dat
     preguntas, lanzado = [], []
     monkeypatch.setattr(pantalla, "ask_confirmation", lambda *a, **k: preguntas.append(a[2]) or True)
     monkeypatch.setattr(view, "run_task", lambda fn, **k: lanzado.append(fn))
+    # Anuncios reales: se avisa de que se eliminan en Wallapop, de uno en uno.
+    monkeypatch.setattr(app_with_data.publishing, "is_demo_listing", lambda _id: False)
     view._delete()
     assert f"ELIMINAR {len(activos)} anuncio(s)" in preguntas[0]
     assert cuenta.alias in preguntas[0] and "NO se puede deshacer" in preguntas[0]
     assert len(lanzado) == 1
+
+
+def test_los_anuncios_de_prueba_se_quitan_al_momento(qapp, app_with_data, monkeypatch):
+    from lot_bot.ui.views import listings as pantalla
+
+    view = pantalla.ListingsView(app_with_data, _runner())
+    view.refresh()
+    view._select_all_active()
+    activos = [v.id for v in view._listings if v.status == "active"]
+    preguntas = []
+    monkeypatch.setattr(pantalla, "ask_confirmation", lambda *a, **k: preguntas.append(a[2]) or True)
+    view._delete()  # modo DEMO: sin esperas ni tareas en segundo plano
+    assert "de prueba (DEMO)" in preguntas[0]
+    assert all(app_with_data.listings.get(i).status == "removed" for i in activos)
+    assert "Quitados" in view.selection_label.text()
 
 
 def test_la_opcion_de_fotos_se_guarda_al_elegirla(qapp, app_with_data):

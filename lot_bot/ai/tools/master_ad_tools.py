@@ -102,9 +102,8 @@ GENERATED_IMAGE_PLACEHOLDER = "(imagen generada para cada anuncio)"
 
 _FIXES = {
     "categoría": "pon la categoría en «Anuncio principal»",
-    "fotografía": "sube tus fotos desde el ordenador en «Anuncio principal» → «Fotografías…» "
-    "(no hace falta ninguna clave) o, si lo prefieres, añade una clave de FLUX.2 Pro en "
-    "Configuración → IA / Imágenes para generar una por anuncio",
+    "fotografía": "sube tus fotos desde el ordenador en «Imágenes» o en «Anuncio principal» → "
+    "«Fotografías…»",
 }
 
 

@@ -375,6 +375,20 @@ class ListingsView(BaseView):
         titles = "\n".join(f"   · {v.title}" for v in selected[:8])
         if len(selected) > 8:
             titles += f"\n   · … y {len(selected) - 8} más"
+        if all(self.app.publishing.is_demo_listing(i) for i in ids):
+            # Anuncios de prueba: no están en Wallapop. Se quitan al momento.
+            if not ask_confirmation(
+                self,
+                "Quitar anuncios de prueba",
+                f"Son {len(ids)} anuncio(s) de prueba (DEMO): no están en Wallapop. Se quitan "
+                "de LOT Bot al momento.",
+            ):
+                return
+            outcomes = self.app.publishing.delete_listings(ids, confirmed=True, actor="usuario")
+            done = sum(1 for o in outcomes if o.success)
+            self.refresh()
+            self.selection_label.setText(f"Quitados {done} anuncio(s) de prueba.")
+            return
         if not ask_confirmation(
             self,
             "Eliminar anuncios de Wallapop",

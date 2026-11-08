@@ -64,7 +64,7 @@ class SettingsView(BaseView):
         # es baja, se hace scroll en vez de aplastar los controles.
         self.tabs.addTab(_scrollable(self._business_tab()), "Negocio")
         self.tabs.addTab(_scrollable(self._templates_tab()), "Plantillas")
-        self.tabs.addTab(_scrollable(self._ai_tab()), "IA / Imágenes")
+        self.tabs.addTab(_scrollable(self._ai_tab()), "Asistente IA")
         self.tabs.addTab(_scrollable(self._wallapop_tab()), "Wallapop")
         self.tabs.addTab(_scrollable(self._about_tab()), "Acerca de")
         self.body.addWidget(self.tabs, 1)
@@ -199,7 +199,7 @@ class SettingsView(BaseView):
         apply_button.clicked.connect(self._apply_ai)
         card.add(apply_button)
         layout.addWidget(card)
-        layout.addWidget(self._flux_card())
+        # Las imágenes ya no se generan con IA: solo se suben fotos propias.
         layout.addStretch(1)
         return widget
 
@@ -348,10 +348,6 @@ class SettingsView(BaseView):
         self.publish_images.addItem(
             "Mis fotos marcadas, UNA distinta en cada anuncio (nunca repite una ya publicada)",
             "rotar",
-        )
-        self.publish_images.addItem(
-            "Generar una foto distinta por anuncio con FLUX.2 Pro (solo esa foto; necesita clave)",
-            True,
         )
         # Se guarda nada más elegirla (sin pulsar «Aplicar»).
         self.publish_images.currentIndexChanged.connect(self._save_photo_option)
@@ -521,7 +517,6 @@ class SettingsView(BaseView):
             self.ai_provider.setCurrentIndex(index)
         self.ai_key_label.setText(mask(settings.anthropic_api_key))
         self.ai_model_label.setText(settings.ai_model)
-        self._refresh_flux()
 
         index = self.integration_mode.findData(self.app.integration_mode or "demo")
         self.integration_mode.setCurrentIndex(max(index, 0))

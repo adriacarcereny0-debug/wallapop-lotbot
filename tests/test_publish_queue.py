@@ -277,7 +277,7 @@ def test_publica_10_canapes_crea_la_cola_tras_confirmar(app):
     plan = respuesta.pending.request
     texto = " ".join(plan.lines)
     assert "60 segundos" in texto
-    assert "imagen de DEMOSTRACIÓN distinta" in texto
+    assert "Fotografías: las tuyas" in texto  # sin imágenes generadas con IA
     assert app.publish_queue.latest_job_id() is None  # nada antes de confirmar
 
     agente.confirm(plan.token)

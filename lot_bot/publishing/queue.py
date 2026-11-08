@@ -82,7 +82,8 @@ NO_PHOTOS_MESSAGE = (
 )
 DEFAULT_PUBLISH_SETTINGS: dict[str, Any] = {
     "minimum_publish_interval_seconds": MINIMUM_PUBLISH_INTERVAL_SECONDS,
-    "generate_images": True,
+    # Las imágenes ya no se generan con IA (solo fotos subidas por el usuario).
+    "generate_images": False,
     # Mis fotos: False = todas las marcadas en cada anuncio; True = una
     # distinta en cada anuncio, rotando entre las marcadas.
     "rotate_photos": False,
@@ -327,6 +328,9 @@ class PublishQueue:
             )
         except ValueError:
             values["minimum_publish_interval_seconds"] = MINIMUM_PUBLISH_INTERVAL_SECONDS
+        # Generar imágenes con IA está retirado: aunque una configuración
+        # antigua lo tenga activado, se publican siempre las fotos propias.
+        values["generate_images"] = False
         return _clamp_pacing(values)
 
     def save_settings(self, **changes: Any) -> dict[str, Any]:
@@ -337,6 +341,7 @@ class PublishQueue:
         if "automatic_retries" in changes:
             changes["automatic_retries"] = max(0, min(3, int(changes["automatic_retries"])))
         merged = _clamp_pacing({**self.settings(), **changes})
+        merged["generate_images"] = False  # imágenes con IA: retirado
         with self._db.session_scope() as session:
             row = session.get(Setting, SETTINGS_KEY)
             if row is None:

@@ -24,6 +24,27 @@ _PRICE_RE = re.compile(r"(\d{1,6}(?:[.,]\d{1,2})?)\s*(?:€|eur|euros)", re.IGNO
 _BARE_NUMBER_RE = re.compile(r"\b(\d{2,6}(?:[.,]\d{1,2})?)\b")
 
 
+#: Generar o editar imágenes con IA está retirado: las fotos se suben.
+AI_IMAGES_RETIRED = (
+    "LOT Bot ya no crea ni edita imágenes con IA. Sube tus fotos desde el ordenador en "
+    "«Imágenes» (o en «Anuncio principal» → «Fotografías…») y se usarán en tus anuncios."
+)
+
+
+def _asks_ai_image(text: str) -> bool:
+    """¿Pide generar o editar una imagen (algo que ya no se hace)?"""
+    normalized = _normalize(text)
+    numbered = re.search(r"\bimagen\s+(?:numero\s+|n\s*)?(\d+)\b", normalized)
+    if numbered and re.search(
+        r"\b(mejora|mejorar|calidad|resolucion|habitacion|dormitorio|estilo|referencia|basada|basandote)\b",
+        normalized,
+    ):
+        return True
+    return bool(
+        re.search(r"\b(genera|generar|crea|crear|haz)\b.*\b(imagen|foto|fotografia)\b", normalized)
+    )
+
+
 def _normalize(text: str) -> str:
     stripped = unicodedata.normalize("NFKD", text or "")
     stripped = "".join(c for c in stripped if not unicodedata.combining(c))
@@ -116,6 +137,8 @@ class RuleBasedProvider(AIProvider):
         if not text:
             return ProviderReply(text=self._help())
 
+        if _asks_ai_image(text):
+            return ProviderReply(text=AI_IMAGES_RETIRED)
         call = self._match(text)
         if call is None:
             return ProviderReply(text=self._help(text))
@@ -191,19 +214,8 @@ class RuleBasedProvider(AIProvider):
             return call("get_statistics", ordenar_por=order, cuenta=accounts[0] if accounts else None)
 
         # --- 0b. Imágenes ---
-        image_number = re.search(r"\bimagen\s+(?:numero\s+|n\s*)?(\d+)\b", normalized)
         if re.search(r"\b(lista|listar|muestra|ensename|ver)\b.*\bimagenes\b", normalized):
             return call("list_images")
-        if image_number and re.search(r"\b(mejora|mejorar|calidad|resolucion)\b", normalized):
-            return call("enhance_image", imagen=int(image_number.group(1)))
-        if image_number and re.search(r"\b(habitacion|dormitorio)\b", normalized):
-            return call("change_image_room", imagen=int(image_number.group(1)), habitacion=_extract_after(normalized, "habitacion"))
-        if image_number and re.search(r"\bestilo\b", normalized):
-            return call("change_image_style", imagen=int(image_number.group(1)), estilo=_extract_after(normalized, "estilo"))
-        if image_number and re.search(r"\b(referencia|basada|basandote)\b", normalized):
-            return call("image_from_reference", imagen=int(image_number.group(1)))
-        if re.search(r"\b(genera|generar|crea|crear|haz)\b.*\b(imagen|foto|fotografia)\b", normalized):
-            return call("generate_image")
 
         # --- 0. Cola de publicación automática ---
         if re.search(r"\b(cola|publicacion automatica|publicaciones automaticas)\b", normalized) or re.search(

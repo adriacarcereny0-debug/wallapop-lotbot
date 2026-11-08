@@ -142,7 +142,8 @@ def test_en_modo_real_sin_fotos_se_explica_que_falta(real):
     texto = textos(r)
     assert not r.needs_confirmation
     assert "Todavía no se puede publicar" in texto and "fotografía" in texto
-    assert "FLUX" in texto  # dice cómo arreglarlo
+    assert "Imágenes" in texto and "Fotografías" in texto  # dice cómo arreglarlo
+    assert "FLUX" not in texto  # la IA de imágenes está retirada
 
 
 def test_en_modo_real_solo_se_ofrecen_cuentas_reales(real):
@@ -302,7 +303,7 @@ def test_sin_clave_de_flux_se_publica_con_mis_fotos(real, tmp_path, monkeypatch)
 
     r = app.agent.ask("Empieza a subir 1 anuncio en la cuenta Mi tienda")
     assert r.needs_confirmation
-    assert any("las tuyas" in linea and "no hace falta" in linea for linea in r.pending.request.lines)
+    assert any("las tuyas" in linea for linea in r.pending.request.lines)
     app.agent.confirm(r.pending.token)
     app.publish_queue.clock = FakeClock()
     app.backend.service.is_mock = True
@@ -320,4 +321,4 @@ def test_sin_fotos_ni_clave_se_explica_como_subirlas(real):
     app, _, _ = real
     r = app.agent.ask("Empieza a subir 1 anuncio en la cuenta Mi tienda")
     texto = textos(r)
-    assert "Fotografías…" in texto and "no hace falta ninguna clave" in texto
+    assert "Fotografías…" in texto and "«Imágenes»" in texto

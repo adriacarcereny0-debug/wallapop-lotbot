@@ -238,6 +238,8 @@ _PRODUCT = {
     "se usan los datos del anuncio principal. Solo características reales.",
 }
 
+#: El asistente solo puede listar las fotos subidas: generar o editar imágenes
+#: con IA está retirado (esas herramientas quedan definidas, sin registrar).
 IMAGE_TOOLS: list[Tool] = [
     Tool(
         name="list_images",
@@ -246,6 +248,9 @@ IMAGE_TOOLS: list[Tool] = [
         handler=_list_images,
         category=ToolCategory.IMAGES,
     ),
+]
+
+RETIRED_IMAGE_TOOLS: list[Tool] = [
     Tool(
         name="generate_image",
         description="Genera desde cero una foto realista del producto. Requiere confirmación.",
