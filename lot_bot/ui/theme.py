@@ -157,6 +157,39 @@ QFrame#StatCard {{
     border: 1px solid {BORDER};
     border-radius: 12px;
 }}
+/* ---------- Chat del asistente ---------- */
+QLabel#ChatMeta {{ color: {TEXT_FAINT}; font-size: 11px; background: transparent; }}
+QLabel#ChatAction {{
+    color: {TEXT_MUTED};
+    font-size: 12px;
+    background: {BG_ELEVATED};
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+    padding: 3px 10px;
+}}
+QPushButton#ChatChip {{
+    background: transparent;
+    border: 1px solid {BORDER_STRONG};
+    border-radius: 12px;  /* más de la mitad de la altura: Qt no redondea */
+    min-height: 16px;
+    padding: 4px 13px;
+    color: {TEXT_MUTED};
+    font-size: 12px;
+}}
+QPushButton#ChatChip:hover {{ border-color: {ACCENT}; color: {TEXT}; background: {ACCENT_SOFT}; }}
+QPushButton#ChatChip:pressed {{ padding-top: 5px; padding-bottom: 3px; }}
+QFrame#ChatInput {{
+    background: {CARD};
+    border: 1px solid {BORDER_STRONG};
+    border-radius: 14px;
+}}
+QTextEdit#ChatInputText {{
+    background: transparent;
+    border: none;
+    padding: 4px 0;
+    font-size: 13.5px;
+}}
+
 QLabel#HeroCaption {{ font-size: 12px; color: {TEXT_FAINT}; }}
 QLabel#HeroTitle {{ font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }}
 QLabel#HeroText {{ font-size: 13px; color: {TEXT_MUTED}; }}
