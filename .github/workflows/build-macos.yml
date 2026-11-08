@@ -5,6 +5,8 @@
 #   https://github.com/<usuario>/<repo>/releases/latest/download/LOT-Bot-macOS-arm64.dmg
 #   https://github.com/<usuario>/<repo>/releases/latest/download/LOT-Bot-macOS-intel.dmg
 #
+# Las descargas se publican solo desde la rama «estable» (el canal de clientes).
+#
 # Firma y notarización de Apple (opcional): añade en Settings → Secrets → Actions
 #   MACOS_CERT_P12_BASE64, MACOS_CERT_PASSWORD, MACOS_SIGN_IDENTITY,
 #   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD
@@ -15,7 +17,7 @@ name: App para Mac
 on:
   workflow_dispatch:
   push:
-    branches: ["main", "claude/**"]
+    branches: ["main", "estable", "claude/**"]
     tags: ["v*"]
 
 permissions:
@@ -94,8 +96,11 @@ jobs:
           if-no-files-found: error
 
   publicar:
-    # Solo si las dos versiones (chip Apple e Intel) se han compilado Y probado bien.
+    # Solo si las dos versiones (chip Apple e Intel) se han compilado Y probado bien,
+    # y solo desde el canal «estable» (o una etiqueta v*): lo que se sube a las
+    # demás ramas se compila y se prueba, pero no llega a los clientes.
     needs: build
+    if: github.ref == 'refs/heads/estable' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

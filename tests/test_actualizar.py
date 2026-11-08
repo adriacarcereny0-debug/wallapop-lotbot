@@ -122,11 +122,21 @@ def test_sin_internet_o_sin_acceso_lo_explica(repos):
     assert not info.available and "No se ha podido consultar GitHub" in info.message
 
 
-def test_una_instalacion_que_no_es_de_github(tmp_path):
+def test_una_instalacion_que_no_es_de_github(tmp_path, monkeypatch):
+    import lot_bot.core.updater as mod
+
+    monkeypatch.setattr(mod.sys, "platform", "win32")
     up = updater(tmp_path, tmp_path)
     assert not up.supported
     assert not up.check().available
     assert "a mano" in up.unsupported_reason()
+
+
+def test_la_app_de_mac_explica_como_actualizar(tmp_path, monkeypatch):
+    import lot_bot.core.updater as mod
+
+    monkeypatch.setattr(mod.sys, "platform", "darwin")
+    assert ".dmg" in updater(tmp_path, tmp_path).unsupported_reason()
 
 
 @pytest.mark.ui
