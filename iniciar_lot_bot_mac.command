@@ -3,7 +3,7 @@
 # La primera vez prepara el entorno; después abre la aplicación.
 cd "$(dirname "$0")" || exit 1
 
-if [ ! -x ".venv/bin/python" ]; then
+if [ ! -x ".venv/bin/python" ] || ! .venv/bin/python -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
     echo "Preparando LOT Bot por primera vez. Puede tardar unos minutos..."
     if ! bash scripts/install_dev.sh; then
         echo ""

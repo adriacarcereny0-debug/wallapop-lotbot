@@ -52,6 +52,21 @@ A partir de ahí se abre con doble clic, desde el Launchpad o con Spotlight
 Con LOT Bot abierto, clic derecho en su icono del Dock → **Opciones** →
 **Mantener en el Dock**.
 
+## Otra forma: la copia de GitHub (se actualiza con un clic)
+
+Es la misma que en Windows: con ella LOT Bot avisa solo cuando hay una versión
+nueva y se actualiza pulsando **Actualizar**. Se prepara una sola vez:
+
+1. Instala **Python 3.12** desde <https://www.python.org/downloads/macos/>
+   (el que trae el Mac es antiguo y no vale).
+2. Instala **GitHub Desktop** (<https://desktop.github.com>), entra con tu cuenta
+   de GitHub (la que tiene acceso a LOT Bot) y clona el repositorio.
+   > Alternativa en Terminal: `git clone <enlace del repositorio>`. La primera vez
+   > macOS ofrece instalar las «herramientas de línea de comandos»: acepta.
+3. En la carpeta de LOT Bot, haz doble clic en **`iniciar_lot_bot_mac.command`**.
+   La primera vez tarda unos minutos (prepara todo); después se abre en segundos.
+   Si macOS pregunta si quieres abrirlo, pulsa **Abrir**.
+
 ## Comprobar que todo funciona
 
 Si algo no va, abre **Terminal** y ejecuta:
