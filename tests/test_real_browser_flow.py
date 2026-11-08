@@ -173,7 +173,7 @@ def test_navegador_real_captcha_espera_al_usuario_y_continua(servicio):
     service.site.urls["subir"] += "?captcha=1"
     avisos = []
 
-    def gate(ref, mensaje):
+    def gate(ref, mensaje, **_):
         avisos.append(mensaje)
         paginas[0].click("text=He completado la verificación")  # la persona
         return True
@@ -184,6 +184,47 @@ def test_navegador_real_captcha_espera_al_usuario_y_continua(servicio):
     assert avisos and "Wallapop requiere una verificación" in avisos[0]
     assert len(web.published) == 1
     assert list((tmp_path / "logs" / "navegador").glob("*verificacion*.png"))
+
+
+def test_navegador_real_captcha_sigue_solo_cuando_la_persona_lo_completa(servicio):
+    """Sin pulsar «Continuar»: LOT Bot pone la ventana delante, ve que el
+    CAPTCHA sigue ahí y, en cuanto la persona lo completa, sigue solo."""
+    service, web, tmp_path = servicio
+    service.site.urls["subir"] += "?captcha=1"
+    paginas = []
+    original_open = service.launcher.open
+
+    def open_y_guardar(profile_dir, **kw):
+        cm = original_open(profile_dir, **kw)
+
+        class Envoltorio:
+            def __enter__(self_inner):
+                page = cm.__enter__()
+                paginas.append(page)
+                return page
+
+            def __exit__(self_inner, *exc):
+                return cm.__exit__(*exc)
+
+        return Envoltorio()
+
+    service.launcher.open = open_y_guardar
+    vistos = []
+
+    def gate(ref, mensaje, *, solved=None, can_defer=False, **_):
+        vistos.append(solved())  # todavía está: False
+        paginas[0].click("text=He completado la verificación")  # la persona
+        for _ in range(20):
+            if solved():
+                vistos.append(True)
+                return True
+        return False
+
+    service.user_gate = gate
+    resultado = service.create_item("cuenta-1", borrador(tmp_path))
+    assert resultado.success, resultado.message
+    assert vistos == [False, True]
+    assert len(web.published) == 1
 
 
 def test_navegador_real_sube_la_foto_aunque_el_campo_se_cree_al_pulsar_el_boton(servicio):

@@ -139,6 +139,17 @@ class PublishQueueView(BaseView):
             f"✓ {progress.published} publicados · ⏳ {progress.in_progress} en espera · "
             f"○ {progress.pending} pendientes · ✗ {progress.failed} fallidos",
         ]
+        verifying = [
+            v for v in queue.pending_verifications() if v["cola"] == progress.job_id
+        ]
+        if verifying:
+            names = ", ".join(v["cuenta"] for v in verifying)
+            others = any(v["aplazada"] for v in verifying)
+            lines.append(
+                f"<b style='color:{theme.WARNING}'>Verificación de Wallapop pendiente en:</b> "
+                f"{names}. Complétala en su ventana de Chrome; LOT Bot sigue solo al terminar"
+                + (" (mientras tanto, publica en las demás cuentas)." if others else ".")
+            )
         if progress.status == "paused" and progress.pause_reason:
             lines.append(f"<b style='color:{theme.WARNING}'>En pausa:</b> {progress.pause_reason}")
         self.summary.setText("<br>".join(lines))

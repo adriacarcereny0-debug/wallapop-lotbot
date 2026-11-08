@@ -54,15 +54,25 @@ from lot_bot.wallapop.errors import (
     BrowserStepError,
     FormMismatchError,
     ImageUploadError,
+    VerificationDeferredError,
     VerificationRequiredError,
     WallapopError,
 )
 
 logger = logging.getLogger(__name__)
 
-#: gate(account_ref, mensaje) -> True si el usuario pulsa «Continuar»,
-#: False si cancela o se agota el tiempo.
-UserGate = Callable[[str, str], bool]
+#: gate(account_ref, mensaje, *, solved=None, can_defer=False) -> respuesta.
+#:
+#: * True: se sigue (la persona ha completado lo que se pedía, o ha pulsado
+#:   «Continuar»).
+#: * False: se cancela.
+#: * DEFER (solo si `can_defer`): Wallapop pide una verificación en esta
+#:   cuenta y, mientras la persona la completa, se publica en OTRAS cuentas.
+#:
+#: Con una verificación se pasa `solved()`: dice si ya ha desaparecido de la
+#: página, para seguir SOLO sin que haga falta pulsar «Continuar».
+UserGate = Callable[..., Any]
+DEFER = "aplazar"
 
 ATTRIBUTE_LABELS = {
     "estado": "Estado", "uso": "Uso", "color": "Color", "material": "Material", "marca": "Marca",
@@ -121,7 +131,8 @@ class ListingForm:
         profile_dir: Path | None = None,
         shots_dir: Path | None = None,
         gate: UserGate | None = None,
-        gate_timeout_s: float = 1800.0,
+        gate_timeout_s: float | None = None,
+        on_verification: Callable[[], Any] | None = None,
     ) -> None:
         self.page = page
         self.site = site
@@ -131,7 +142,10 @@ class ListingForm:
         self.profile_dir = Path(profile_dir) if profile_dir else None
         self.shots_dir = shots_dir
         self.gate = gate
+        #: None = sin límite: se espera a la persona lo que haga falta.
         self.gate_timeout_s = gate_timeout_s
+        #: Se llama al aparecer una verificación (pone la ventana delante).
+        self.on_verification = on_verification
         self.steps: list[str] = []
         self.skipped: list[str] = []
         self.attributes_filled: dict[str, str] = {}
@@ -202,16 +216,45 @@ class ListingForm:
     def _verification_visible(self) -> bool:
         return bool(self.site.verification and self.page.first_visible(self.site.verification, 0))
 
+    def verification_solved(self) -> bool:
+        """La verificación ya no está (comprobado dos veces, con un segundo de
+        margen: al completarla a veces desaparece y vuelve a salir)."""
+        if self._verification_visible():
+            return False
+        self.page.wait(1000)
+        return not self._verification_visible()
+
     def guard(self, step: str) -> None:
-        """Si Wallapop pide una verificación: esperar al usuario, NUNCA resolverla."""
+        """Si Wallapop pide una verificación: avisar y esperar a la persona,
+        NUNCA resolverla. En cuanto desaparece se sigue en el mismo paso."""
         if not self._verification_visible():
             return
         self.save_error_context(f"verificacion-{step}", "Wallapop pide una verificación")
-        deadline = time.monotonic() + self.gate_timeout_s
+        if self.on_verification is not None:
+            try:
+                self.on_verification()  # ventana delante para que se vea
+            except Exception:
+                logger.debug("No se ha podido poner la ventana delante", exc_info=True)
+        deadline = (
+            None if self.gate_timeout_s is None else time.monotonic() + self.gate_timeout_s
+        )
+        # Antes de pulsar «Publicar» este anuncio se puede hacer más tarde
+        # (no hay riesgo de duplicarlo); después, solo se puede esperar aquí.
+        can_defer = "Publicar" not in self.steps
         while self._verification_visible():
-            if self.gate is None or time.monotonic() > deadline:
+            if self.gate is None or (deadline is not None and time.monotonic() > deadline):
                 raise VerificationRequiredError(f"Verificación en el paso «{step}».")
-            if not self.gate(self.account_ref, VerificationRequiredError.user_message):
+            answer = self.gate(
+                self.account_ref,
+                VerificationRequiredError.user_message,
+                solved=self.verification_solved,
+                can_defer=can_defer,
+                focus=self.on_verification,
+            )
+            if answer == DEFER and can_defer:
+                logger.info("Verificación en «%s»: este anuncio se hace después.", step)
+                raise VerificationDeferredError(f"Verificación en el paso «{step}» (aplazado).")
+            if not answer:
                 raise VerificationRequiredError(f"Verificación en el paso «{step}» (no completada).")
         logger.info("Verificación completada por el usuario; se sigue en «%s».", step)
 

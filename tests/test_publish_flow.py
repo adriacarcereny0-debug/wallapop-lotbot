@@ -137,7 +137,9 @@ def test_cadena_de_anuncios_sigue_sola_si_uno_falla(listo):
     assert progreso.failed == 1 and progreso.published == 2
 
 
-def test_captcha_pausa_mantiene_el_navegador_y_continuar_sigue(listo):
+def test_captcha_pausa_mantiene_el_navegador_y_sigue_solo_al_completarlo(listo):
+    """CAPTCHA: LOT Bot no lo toca. Pone la ventana delante, avisa y, en cuanto
+    la persona lo completa, sigue SOLO (sin pulsar «Continuar»)."""
     app, world, _ = listo
     world["verification"] = True
     publicar_uno(app)
@@ -145,12 +147,29 @@ def test_captcha_pausa_mantiene_el_navegador_y_continuar_sigue(listo):
     hilo = en_segundo_plano(cola.run_until_idle)
     assert esperar(lambda: cola.progress().status == "paused")
     progreso = cola.progress()
-    assert "Wallapop requiere una verificación" in progreso.pause_reason
-    assert "pulsa Continuar" in progreso.pause_reason
+    assert "Wallapop pide una verificación" in progreso.pause_reason
+    assert "sigue solo" in progreso.pause_reason
     assert app.wallapop.pool.is_open(progreso.tasks[0]["cuenta_ref"])  # sigue abierto
-    world["verification"] = False  # el usuario la completa a mano
-    cola.resume(progreso.job_id)  # botón «Continuar»
-    hilo.join(10)
+    assert [v["cuenta"] for v in cola.pending_verifications()] == ["Mi tienda"]
+    assert ("focus",) in world["pages"][0].log  # ventana puesta delante
+    world["verification"] = False  # la persona la completa a mano (sin «Continuar»)
+    hilo.join(15)
+    assert not hilo.is_alive()
+    progreso = cola.progress()
+    assert progreso.published == 1 and progreso.status == "completed"
+    assert cola.pending_verifications() == []
+
+
+def test_captcha_continuar_a_mano_tambien_sigue(listo):
+    app, world, _ = listo
+    world["verification"] = True
+    publicar_uno(app)
+    cola = app.publish_queue
+    hilo = en_segundo_plano(cola.run_until_idle)
+    assert esperar(lambda: cola.progress().status == "paused")
+    world["verification"] = False
+    cola.resume(cola.progress().job_id)  # botón «Continuar»
+    hilo.join(15)
     assert cola.progress().published == 1
 
 

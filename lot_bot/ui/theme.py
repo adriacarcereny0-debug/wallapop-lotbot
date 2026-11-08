@@ -103,6 +103,17 @@ QLabel#DemoBanner {{
     padding: 9px 24px;
 }}
 
+QFrame#VerificationBanner {{
+    background: #3a1d12;
+    border-bottom: 2px solid {WARNING};
+}}
+QLabel#VerificationBannerText {{
+    color: #ffd9b0;
+    font-weight: 700;
+    font-size: 14px;
+    background: transparent;
+}}
+
 /* ---------- Cabecera ---------- */
 QLabel#PageTitle {{ font-size: 24px; font-weight: 700; letter-spacing: -0.3px; }}
 QLabel#PageSubtitle {{ font-size: 12px; color: {TEXT_MUTED}; }}

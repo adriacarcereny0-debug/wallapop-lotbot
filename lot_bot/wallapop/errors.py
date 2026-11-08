@@ -145,6 +145,20 @@ class VerificationRequiredError(WallapopError):
     )
 
 
+class VerificationDeferredError(VerificationRequiredError):
+    """Wallapop pide una verificación en una cuenta y, mientras la persona la
+    completa en esa ventana, la cola sigue con OTRAS cuentas. Ese anuncio no
+    ha fallado: se publica entero cuando la verificación desaparece.
+
+    Solo se usa ANTES de pulsar «Publicar» (nunca puede quedar duplicado).
+    """
+
+    user_message = (
+        "Wallapop pide una verificación en esta cuenta. Complétala en su ventana: "
+        "mientras tanto se publica en las demás cuentas y este anuncio se hace después."
+    )
+
+
 class BrowserStepError(WallapopError):
     """Un paso del formulario de Wallapop no se ha podido completar.
 

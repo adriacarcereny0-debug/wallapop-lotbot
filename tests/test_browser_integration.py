@@ -100,6 +100,9 @@ class FakePage(BrowserPage):
 
     closed = False
 
+    def focus_window(self) -> None:
+        self.log.append(("focus",))
+
     def is_alive(self) -> bool:
         return not self.closed and not self.world.get("closed")
 
@@ -123,7 +126,9 @@ class FakePage(BrowserPage):
                         visible.add(spec.targets[0])
         if getattr(self, "cat_open", False) and FORM.category_panel:
             visible |= {FORM.category_panel[0]}
-        if self.world.get("verification"):
+        if self.world.get("verification") or (
+            getattr(self, "profile", None) in self.world.get("verification_profiles", ())
+        ):
             visible |= {SITE.verification[0]}
         if self.world.get("reject_image") and self.thumbs == 0 and self.world.get("files_sent"):
             visible |= set(FORM.photo_rejected[:1])
@@ -226,6 +231,7 @@ class FakeLauncher(BrowserLauncher):
         (profile_dir / "Cookies").write_text("cifradas-por-el-navegador")
         self.opened.append(profile_dir)
         page = FakePage(self.world)
+        page.profile = profile_dir.name  # para CAPTCHA solo en una cuenta
         self.pages.append(page)
         try:
             yield page
@@ -381,7 +387,7 @@ def test_captcha_a_mitad_espera_al_usuario_y_sigue_desde_el_mismo_paso(profiles,
     service, launcher = make_service(profiles, world, tmp_path)
     avisos = []
 
-    def gate(ref, mensaje):
+    def gate(ref, mensaje, **_):
         avisos.append((ref, mensaje))
         page = launcher.pages[0]
         assert not any(e[0] in ("fill", "click", "option") and e[-1] == SITE.verification[0]

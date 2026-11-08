@@ -212,6 +212,32 @@ class BrowserWallapopService(WallapopService):
         """Cierra el navegador abierto de una cuenta (p. ej. antes de iniciar sesión)."""
         self.pool.close(account_ref)
 
+    def verification_pending(self, account_ref: str) -> bool | None:
+        """¿Sigue Wallapop pidiendo la verificación en la ventana de la cuenta?
+
+        Solo MIRA la página (nunca toca la verificación ni abre un navegador).
+        None si la ventana ya no está abierta."""
+        selectors = self.site.verification
+
+        def look(page: BrowserPage) -> bool:
+            return bool(selectors and page.first_visible(selectors, 0))
+
+        try:
+            return self.pool.run_if_open(account_ref, look, timeout=20.0)
+        except Exception as exc:
+            logger.debug("No se ha podido mirar la ventana de %s: %s", account_ref, exc)
+            return None
+
+    def show_window(self, account_ref: str) -> bool:
+        """Pone delante la ventana de la cuenta (si está abierta)."""
+        try:
+            return self.pool.run_if_open(
+                account_ref, lambda page: page.focus_window() or True, timeout=20.0
+            ) is True
+        except Exception as exc:
+            logger.debug("No se ha podido mostrar la ventana de %s: %s", account_ref, exc)
+            return False
+
     def shutdown(self) -> None:
         self.pool.close_all()
 
@@ -376,6 +402,15 @@ class BrowserWallapopService(WallapopService):
         data = self.listing_data(draft)
         profile_dir = self.profiles.profile_dir(account_ref)
 
+        user_gate = self.user_gate
+        gate = None
+        if user_gate is not None:
+
+            def gate(ref: str, message: str, **kwargs: Any) -> Any:
+                # Esperando a la persona: el navegador no se da por colgado.
+                with self.pool.waiting_for_user(ref):
+                    return user_gate(ref, message, **kwargs)
+
         def publish(page: BrowserPage) -> PublishReport:
             form = ListingForm(
                 page,
@@ -384,7 +419,8 @@ class BrowserWallapopService(WallapopService):
                 account_ref=account_ref,
                 profile_dir=profile_dir,
                 shots_dir=self._shots,
-                gate=self.user_gate,
+                gate=gate,
+                on_verification=page.focus_window,
             )
             form.guard("Comprobar sesión")
             check = self.verify_session(page)
@@ -397,7 +433,7 @@ class BrowserWallapopService(WallapopService):
                 # Carga lenta o pestaña cerrada: no es una sesión caducada.
                 page.wait(1500)
                 check = self.verify_session(page)
-            while not check.ok and self.user_gate is not None:
+            while not check.ok and gate is not None:
                 # La cuenta NO se da por caducada: se deja la MISMA ventana en
                 # la portada para que el usuario vuelva a entrar y se sigue.
                 form.save_error_context("sesion", check.message)
@@ -405,7 +441,7 @@ class BrowserWallapopService(WallapopService):
                     page.goto(self.site.url("inicio"))
                 except Exception:
                     pass
-                if not self.user_gate(account_ref, RELOGIN_MESSAGE):
+                if not gate(account_ref, RELOGIN_MESSAGE):
                     break
                 check = self.verify_session(page)
             if not check.ok:

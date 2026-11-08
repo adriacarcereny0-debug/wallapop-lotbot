@@ -166,6 +166,11 @@ class BrowserPage(ABC):
         """Datos para diagnosticar fallos. Nunca cookies, contraseñas ni tokens."""
         return {}
 
+    def focus_window(self) -> None:
+        """Pone la ventana delante de todo y maximizada (p. ej. cuando Wallapop
+        pide una verificación que tiene que completar la persona)."""
+        return None
+
     @abstractmethod
     def wait(self, ms: int) -> None: ...
 
@@ -826,6 +831,26 @@ class _PlaywrightPage(BrowserPage):
 
     def scroll_to_end(self) -> None:
         self._page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+
+    def focus_window(self) -> None:
+        page = self._page
+        page.bring_to_front()
+        # Minimizar y maximizar hace que Windows la ponga delante de las demás
+        # ventanas (si solo se activa, a veces solo parpadea en la barra).
+        cdp = page.context.new_cdp_session(page)
+        try:
+            window = cdp.send("Browser.getWindowForTarget")["windowId"]
+            # Chrome exige pasar por «normal» antes de maximizar una minimizada.
+            for state in ("minimized", "normal", "maximized"):
+                cdp.send(
+                    "Browser.setWindowBounds",
+                    {"windowId": window, "bounds": {"windowState": state}},
+                )
+        finally:
+            try:
+                cdp.detach()
+            except Exception:
+                pass
 
     def wait(self, ms: int) -> None:
         self._page.wait_for_timeout(ms)

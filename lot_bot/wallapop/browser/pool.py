@@ -15,9 +15,11 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -155,6 +157,29 @@ class BrowserSessionPool:
         self._lock = threading.Lock()
         #: Veces que se ha abierto un navegador por cuenta (diagnóstico/pruebas).
         self.open_count: dict[str, int] = {}
+        #: Cuentas cuyo navegador está esperando a una PERSONA (verificación,
+        #: iniciar sesión...): ese tiempo no cuenta como «no responde».
+        self._waiting_user: dict[str, int] = {}
+
+    @contextmanager
+    def waiting_for_user(self, ref: str) -> Iterator[None]:
+        """Mientras dura, el navegador de `ref` espera a una persona: no se
+        da por colgado aunque pase mucho tiempo."""
+        with self._lock:
+            self._waiting_user[ref] = self._waiting_user.get(ref, 0) + 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                left = self._waiting_user.get(ref, 1) - 1
+                if left > 0:
+                    self._waiting_user[ref] = left
+                else:
+                    self._waiting_user.pop(ref, None)
+
+    def is_waiting_user(self, ref: str) -> bool:
+        with self._lock:
+            return ref in self._waiting_user
 
     def _exit(self, ref: str, worker: _AccountWorker) -> None:
         with self._lock:
@@ -180,17 +205,45 @@ class BrowserSessionPool:
                 self._workers[ref] = worker
                 self.open_count[ref] = self.open_count.get(ref, 0) + 1
             future = worker.submit(fn)
-        try:
-            return future.result(timeout if timeout is not None else self.DEFAULT_TIMEOUT)
-        except FutureTimeout as exc:
-            future.cancel()
-            logger.error("El navegador de %s no ha respondido a tiempo; se cierra.", ref)
-            threading.Thread(target=self.close, args=(ref, 5.0), daemon=True).start()
-            from lot_bot.wallapop.browser.driver import BrowserUnavailable
+        # El tiempo que el navegador pasa esperando a una persona (p. ej. a que
+        # complete un CAPTCHA) no cuenta: solo cuenta el tiempo trabajando.
+        budget = timeout if timeout is not None else self.DEFAULT_TIMEOUT
+        used = 0.0
+        last = time.monotonic()
+        while True:
+            try:
+                return future.result(max(min(1.0, budget - used), 0.05))
+            except FutureTimeout as exc:
+                now = time.monotonic()
+                if not self.is_waiting_user(ref):
+                    used += now - last
+                last = now
+                if used < budget:
+                    continue
+                future.cancel()
+                logger.error("El navegador de %s no ha respondido a tiempo; se cierra.", ref)
+                threading.Thread(target=self.close, args=(ref, 5.0), daemon=True).start()
+                from lot_bot.wallapop.browser.driver import BrowserUnavailable
 
-            raise BrowserUnavailable(
-                "El navegador no ha respondido a tiempo. Se ha cerrado; vuelve a intentarlo."
-            ) from exc
+                raise BrowserUnavailable(
+                    "El navegador no ha respondido a tiempo. Se ha cerrado; vuelve a intentarlo."
+                ) from exc
+
+    def run_if_open(
+        self, ref: str, fn: Callable[[BrowserPage], Any], *, timeout: float = 30.0
+    ) -> Any:
+        """Ejecuta `fn(page)` solo si el navegador de la cuenta ya está abierto
+        (nunca abre uno nuevo). Devuelve None si no lo está."""
+        with self._lock:
+            worker = self._workers.get(ref)
+            if worker is None:
+                return None
+            future = worker.submit(fn)
+        try:
+            return future.result(timeout)
+        except FutureTimeout:
+            future.cancel()
+            return None
 
     def is_open(self, ref: str) -> bool:
         with self._lock:

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from lot_bot import APP_NAME
 from lot_bot.ui import icons, theme
+from lot_bot.ui.verification_alert import VerificationAlert
 from lot_bot.ui.views import (
     AccountsView,
     AssistantView,
@@ -95,6 +96,10 @@ class MainWindow(QMainWindow):
         self.demo_banner.setWordWrap(True)
         self.demo_banner.setObjectName("DemoBanner")
         right.addWidget(self.demo_banner)
+        # Franja de aviso cuando Wallapop pide una verificación (CAPTCHA): se
+        # ve en TODAS las pantallas, suena y sale una notificación de Windows.
+        self.verification_alert = VerificationAlert(self.app, self, self.windowIcon())
+        right.addWidget(self.verification_alert)
         self.stack = QStackedWidget()
         self.stack.setObjectName("Content")
         right.addWidget(self.stack, 1)

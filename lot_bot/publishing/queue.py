@@ -13,10 +13,16 @@ REGLAS
   cuentas distintas) y también entre intentos fallidos.
 * Si una publicación falla: se registra el error, el anuncio queda marcado,
   y solo se reintenta de forma automática una vez más, respetando el
-  intervalo (el doble). Si Wallapop pide una verificación, la sesión ha
-  caducado o limita las peticiones, la cola se PAUSA y espera al usuario:
-  nunca se intenta saltar un bloqueo.
-* Dos fallos seguidos pausan la cola.
+  intervalo (el doble). Si la sesión ha caducado o Wallapop limita las
+  peticiones, la cola se PAUSA y espera al usuario: nunca se intenta saltar
+  un bloqueo.
+* Si Wallapop pide una verificación (CAPTCHA), LOT Bot NUNCA la resuelve: pone
+  la ventana de esa cuenta delante, avisa, y la PERSONA la completa. En
+  cuanto desaparece, se sigue solo (sin pulsar «Continuar») y desde el mismo
+  paso. Se espera lo que haga falta (sin límite de tiempo). Mientras tanto,
+  si hay anuncios de OTRAS cuentas, se siguen publicando; el de la cuenta con
+  verificación se hace después (solo si aún no se había pulsado «Publicar»).
+* Tres fallos seguidos pausan la cola.
 
 PRUEBAS
 -------
@@ -107,9 +113,25 @@ NON_RETRYABLE = {
 }
 UNCONFIRMED_CODE = "RESULTADO_NO_CONFIRMADO"
 RELOGIN_CODE = "INICIAR_SESION"
-#: Máximo que se espera a que el usuario complete una verificación y pulse
-#: «Continuar» antes de dejar la cola en pausa.
-USER_GATE_TIMEOUT_S = 1800.0
+#: Anuncio que espera a que la persona complete una verificación de Wallapop.
+VERIFICATION_CODE = "VERIFICACION"
+DEFERRED_CODE = "VerificationDeferredError"
+#: Máximo que se espera a la persona (verificación, iniciar sesión...).
+#: None = sin límite: la cola nunca da el anuncio por fallido por tardar.
+USER_GATE_TIMEOUT_S: float | None = None
+#: Cada cuánto se mira si la persona ya ha completado la verificación.
+VERIFICATION_POLL_S = 3.0
+#: Respuesta de `_user_gate` para «haz este anuncio después» (la de form.DEFER).
+GATE_DEFER = "aplazar"
+VERIFICATION_WAIT_MESSAGE = (
+    "Wallapop pide una verificación. Complétala en la ventana de Chrome de esta "
+    "cuenta (se ha puesto delante). En cuanto desaparezca, LOT Bot sigue solo: no "
+    "hace falta pulsar «Continuar»."
+)
+VERIFICATION_TASK_MESSAGE = (
+    "Esperando a que completes la verificación de Wallapop en la ventana de esta "
+    "cuenta. Mientras tanto se publica en las demás; este anuncio se hace después."
+)
 #: Seguridad: si fallan tantos anuncios SEGUIDOS, algo ha cambiado en la web
 #: y no tiene sentido seguir gastando intentos: se pausa y se avisa.
 MAX_CONSECUTIVE_FAILURES = 3
@@ -236,6 +258,14 @@ class PublishQueue:
         self._consecutive_failures = 0
         #: Avisos para la interfaz (se llaman desde el hilo de la cola).
         self.listeners: list[Callable[[int], None]] = []
+        #: Cuentas en las que Wallapop pide una verificación ahora mismo:
+        #: {cuenta: {"cola", "desde", "aplazada"}}. «aplazada» = su anuncio
+        #: se hará después y mientras tanto se publica en otras cuentas.
+        self._verifying: dict[str, dict[str, Any]] = {}
+        self._verifying_lock = threading.Lock()
+        self._last_verification_poll = 0.0
+        #: Cuentas cuya ventana hay que volver a poner delante (botón del aviso).
+        self._focus_requests: set[str] = set()
 
     # ------------------------------------------------------------------
     # Configuración
@@ -404,6 +434,9 @@ class PublishQueue:
             for task in tasks:
                 task.status = PublishTaskStatus.CANCELLED
             count = len(tasks)
+        with self._verifying_lock:
+            for ref in [r for r, v in self._verifying.items() if v["cola"] == job_id]:
+                del self._verifying[ref]
         self._set_job(job_id, PublishJobStatus.CANCELLED, "Cancelada por el usuario.")
         self._audit.record_cancelled(
             "Cola de publicación cancelada", detail=f"Cola {job_id}: {count} sin publicar"
@@ -640,10 +673,23 @@ class PublishQueue:
                     )
                     .order_by(PublishTask.position)
                 ).all()
-                # Las cuentas no conectadas (p. ej. desconectadas por el usuario) esperan.
-                task = next((t for t in pending if self._account_usable(t.account_ref)), None)
-                blocked = sorted({t.account_ref for t in pending}) if pending and task is None else []
-                if blocked:
+                # Las cuentas no conectadas (p. ej. desconectadas por el usuario)
+                # y las que esperan una verificación esperan; las demás siguen.
+                verifying = self.verifying_accounts()
+                task = next(
+                    (
+                        t
+                        for t in pending
+                        if t.account_ref not in verifying and self._account_usable(t.account_ref)
+                    ),
+                    None,
+                )
+                waiting = sorted({t.account_ref for t in pending}) if pending and task is None else []
+                only_verifying = bool(waiting) and all(r in verifying for r in waiting)
+                blocked = [] if only_verifying else [r for r in waiting if r not in verifying]
+                if only_verifying:
+                    job_done = False
+                elif blocked:
                     job_done = False
                 elif task is None:
                     job_done = True
@@ -656,6 +702,11 @@ class PublishQueue:
                     interval = job.interval_seconds
                     actor = job.actor
                     position = task.position
+            if only_verifying:
+                # Solo quedan anuncios de cuentas con verificación: se mira si
+                # la persona ya la ha completado (la cola sigue «en marcha»).
+                self._poll_verifications(force=True)
+                return False
             if blocked:
                 aliases = {a.internal_ref: a.alias for a in self._app.accounts.list_accounts()}
                 names = ", ".join(aliases.get(r, r) for r in blocked)
@@ -689,6 +740,7 @@ class PublishQueue:
             self._make_room(job_id, ref)
             wait = self.next_allowed_ts(interval, attempts) - self.clock.now()
             while wait > 0:
+                self._poll_verifications()
                 self.clock.sleep(min(wait, 1.0), self._stop)
                 if self._stop.is_set():
                     self._set_task(task_id, status=PublishTaskStatus.PENDING)
@@ -737,9 +789,15 @@ class PublishQueue:
             except Exception as exc:  # errores de configuración, capacidad...
                 code = type(exc).__name__
                 message = getattr(exc, "user_message", None) or str(exc)
+                if code == DEFERRED_CODE:
+                    self._defer_task(task_id, attempts)
+                    return True
                 self._fail(task_id, job_id, attempts + 1, code, message)
                 return True
 
+            if not outcome.success and outcome.error_code == DEFERRED_CODE:
+                self._defer_task(task_id, attempts)
+                return True
             if outcome.success:
                 self._consecutive_failures = 0
                 if photo_key:
@@ -1042,28 +1100,203 @@ class PublishQueue:
             logger.info("Anuncio no publicado (%s); la cola sigue con el siguiente.", code)
         self._notify(job_id)
 
-    def _user_gate(self, account_ref: str, message: str) -> bool:
-        """Deja la cola en pausa con `message` y espera a «Continuar».
+    def _user_gate(
+        self,
+        account_ref: str,
+        message: str,
+        *,
+        solved: Callable[[], bool] | None = None,
+        can_defer: bool = False,
+        focus: Callable[[], Any] | None = None,
+    ) -> Any:
+        """Espera a la persona. La llama el navegador (desde SU hilo) cuando
+        Wallapop pide una verificación o hay que iniciar sesión.
 
-        La llama el navegador cuando Wallapop pide una verificación (o la
-        ventana de la cuenta sigue abierta). El navegador se queda abierto y,
-        al pulsar «Continuar» (= Reanudar), la publicación sigue desde el
-        mismo paso. True = continuar; False = cancelada o tiempo agotado.
+        * Verificación (`solved` dado): la cuenta queda marcada para que la
+          interfaz avise. Si hay anuncios de OTRAS cuentas y aún no se ha
+          pulsado «Publicar» (`can_defer`), devuelve GATE_DEFER: este anuncio
+          se hace después y la cola sigue con las demás. Si no, la cola se
+          pausa aquí y, en cuanto `solved()` dice que la verificación ha
+          desaparecido, se reanuda SOLA y se sigue desde el mismo paso.
+        * Lo demás: la cola se pausa y se sigue al pulsar «Continuar».
+
+        Sin límite de tiempo. True = seguir; False = cancelada o LOT Bot se cierra.
         """
         job_id = getattr(self, "_current_job", None)
         if job_id is None:
             return False
         aliases = {a.internal_ref: a.alias for a in self._app.accounts.list_accounts()}
-        self.pause(job_id, f"{aliases.get(account_ref, account_ref)}: {message}")
-        deadline = time.monotonic() + USER_GATE_TIMEOUT_S
-        while time.monotonic() < deadline and not self._stop.is_set():
-            status = self._job_status(job_id)
-            if status is PublishJobStatus.RUNNING:
+        alias = aliases.get(account_ref, account_ref)
+        if solved is not None:
+            defer = can_defer and self._others_can_publish(job_id, account_ref)
+            self._verification_started(account_ref, job_id, deferred=defer)
+            if defer:
+                return GATE_DEFER
+            self.pause(job_id, f"{alias}: {VERIFICATION_WAIT_MESSAGE}")
+        else:
+            self.pause(job_id, f"{alias}: {message}")
+        deadline = None if USER_GATE_TIMEOUT_S is None else time.monotonic() + USER_GATE_TIMEOUT_S
+        next_check = 0.0
+        try:
+            while not self._stop.is_set():
+                if deadline is not None and time.monotonic() >= deadline:
+                    return False
+                status = self._job_status(job_id)
+                if status is PublishJobStatus.RUNNING:
+                    return True  # «Continuar»
+                if status in (PublishJobStatus.CANCELLED, PublishJobStatus.COMPLETED):
+                    return False
+                if focus is not None and self._take_focus_request(account_ref):
+                    try:
+                        focus()  # «Mostrar la ventana de Chrome» (desde este hilo)
+                    except Exception:
+                        logger.debug("No se ha podido poner la ventana delante", exc_info=True)
+                if solved is not None and time.monotonic() >= next_check:
+                    next_check = time.monotonic() + 1.0
+                    try:
+                        done = bool(solved())
+                    except Exception:
+                        logger.debug("No se ha podido mirar la verificación", exc_info=True)
+                        done = False
+                    if done:
+                        if self._job_status(job_id) is PublishJobStatus.PAUSED:
+                            self.resume(job_id)
+                        return True
+                self._stop.wait(0.3)
+            return False
+        finally:
+            if solved is not None:
+                self._verification_cleared(account_ref)
+
+    # ------------------------------------------------------------------
+    # Verificaciones de Wallapop (las completa SIEMPRE la persona)
+    # ------------------------------------------------------------------
+    def verifying_accounts(self) -> set[str]:
+        with self._verifying_lock:
+            return set(self._verifying)
+
+    def pending_verifications(self) -> list[dict[str, Any]]:
+        """Cuentas en las que Wallapop pide ahora una verificación (para avisar)."""
+        with self._verifying_lock:
+            items = [(ref, dict(info)) for ref, info in self._verifying.items()]
+        if not items:
+            return []
+        aliases = {a.internal_ref: a.alias for a in self._app.accounts.list_accounts()}
+        return [
+            {
+                "cuenta_ref": ref,
+                "cuenta": aliases.get(ref, ref),
+                "desde": info["desde"],
+                "aplazada": info["aplazada"],
+                "cola": info["cola"],
+            }
+            for ref, info in sorted(items, key=lambda item: item[1]["desde"])
+        ]
+
+    def show_verification_window(self, ref: str) -> None:
+        """Vuelve a poner delante la ventana de la cuenta con la verificación.
+
+        Si el navegador está esperando a la persona (mismo paso), lo hace él
+        mismo en cuanto lo ve; si el anuncio se aplazó, se pide al navegador."""
+        with self._verifying_lock:
+            info = self._verifying.get(ref)
+            if info is None:
+                return
+            if not info["aplazada"]:
+                self._focus_requests.add(ref)
+                return
+        service = getattr(self._app, "wallapop", None)
+        show = getattr(service, "show_window", None)
+        if callable(show):
+            show(ref)
+
+    def _take_focus_request(self, ref: str) -> bool:
+        with self._verifying_lock:
+            if ref in self._focus_requests:
+                self._focus_requests.discard(ref)
                 return True
-            if status in (PublishJobStatus.CANCELLED, PublishJobStatus.COMPLETED):
-                return False
-            self._stop.wait(0.3)
-        return False
+            return False
+
+    def _verification_started(self, ref: str, job_id: int, *, deferred: bool) -> None:
+        with self._verifying_lock:
+            new = ref not in self._verifying
+            self._verifying[ref] = {
+                "cola": job_id,
+                "desde": (self._verifying.get(ref) or {}).get("desde") or datetime.now(),
+                "aplazada": deferred,
+            }
+        if new:
+            self._audit.record_error(
+                "Wallapop pide una verificación",
+                error="La tiene que completar la persona en la ventana de la cuenta.",
+                account_ref=ref,
+                detail="Se publica en las demás cuentas mientras tanto" if deferred else None,
+            )
+        self._notify(job_id)
+
+    def _verification_cleared(self, ref: str) -> None:
+        with self._verifying_lock:
+            info = self._verifying.pop(ref, None)
+            self._focus_requests.discard(ref)
+        if info is None:
+            return
+        self._audit.record_success("Verificación completada: la publicación sigue", account_ref=ref)
+        self._notify(info["cola"])
+        self._wake.set()
+
+    def _others_can_publish(self, job_id: int, ref: str) -> bool:
+        """¿Hay anuncios pendientes de OTRAS cuentas que se puedan publicar ya?"""
+        verifying = self.verifying_accounts()
+        with self._db.session_scope() as session:
+            others = set(
+                session.scalars(
+                    select(PublishTask.account_ref).where(
+                        PublishTask.job_id == job_id,
+                        PublishTask.status == PublishTaskStatus.PENDING,
+                        PublishTask.account_ref != ref,
+                    )
+                ).all()
+            )
+        return any(r not in verifying and self._account_usable(r) for r in others)
+
+    def _defer_task(self, task_id: int, attempts: int) -> None:
+        """El anuncio vuelve a la cola (sin contar como intento ni como fallo)
+        hasta que la persona complete la verificación de su cuenta."""
+        self._set_task(
+            task_id,
+            status=PublishTaskStatus.PENDING,
+            attempts=attempts,
+            error=VERIFICATION_TASK_MESSAGE,
+            error_code=VERIFICATION_CODE,
+        )
+
+    def _poll_verifications(self, *, force: bool = False) -> None:
+        """Mira (sin tocar nada) si ya han desaparecido las verificaciones de
+        las cuentas aplazadas. Si la ventana se ha cerrado, se vuelve a probar
+        con esa cuenta: si Wallapop la sigue pidiendo, se avisará otra vez."""
+        now = time.monotonic()
+        if not force and now - self._last_verification_poll < VERIFICATION_POLL_S:
+            return
+        self._last_verification_poll = now
+        with self._verifying_lock:
+            deferred = [r for r, info in self._verifying.items() if info["aplazada"]]
+        if not deferred:
+            return
+        service = getattr(self._app, "wallapop", None)
+        look = getattr(service, "verification_pending", None)
+        for ref in deferred:
+            try:
+                pending = look(ref) if callable(look) else None
+            except Exception:
+                logger.debug("No se ha podido mirar la verificación de %s", ref, exc_info=True)
+                pending = True
+            if not pending:
+                self._verification_cleared(ref)
+        if not force:
+            return
+        # Nada más que hacer hasta que la persona complete alguna: espera corta.
+        if self.verifying_accounts():
+            self._stop.wait(1.0)
 
     def account_reconnected(self, account_ref: str) -> list[int]:
         """Tras «Reconectar» una cuenta cuya sesión caducó, las colas que
