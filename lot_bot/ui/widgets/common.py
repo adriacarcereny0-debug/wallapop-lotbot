@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import Property, QPropertyAnimation, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QAbstractItemView,
     QFrame,
     QHBoxLayout,
@@ -37,6 +38,65 @@ class Card(QFrame):
     def add(self, widget: QWidget) -> QWidget:
         self.body.addWidget(widget)
         return widget
+
+
+class ToggleSwitch(QAbstractButton):
+    """Interruptor deslizante (activar / desactivar), como el de un móvil."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(46, 26)
+        self._pos = 0.0
+        self._anim = QPropertyAnimation(self, b"knob", self)
+        self._anim.setDuration(140)
+        self.toggled.connect(self._animate)
+
+    def _get_knob(self) -> float:
+        return self._pos
+
+    def _set_knob(self, value: float) -> None:
+        self._pos = value
+        self.update()
+
+    knob = Property(float, _get_knob, _set_knob)
+
+    def _animate(self, checked: bool) -> None:
+        self._anim.stop()
+        self._anim.setStartValue(self._pos)
+        self._anim.setEndValue(1.0 if checked else 0.0)
+        self._anim.start()
+
+    def setChecked(self, checked: bool) -> None:  # noqa: N802 - firma de Qt
+        super().setChecked(checked)
+        self._anim.stop()
+        self._set_knob(1.0 if checked else 0.0)  # sin animación al mostrar
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - firma de Qt
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        on = QColor(theme.ACCENT)
+        off = QColor(theme.BORDER_STRONG)
+        track = QColor(
+            round(off.red() + (on.red() - off.red()) * self._pos),
+            round(off.green() + (on.green() - off.green()) * self._pos),
+            round(off.blue() + (on.blue() - off.blue()) * self._pos),
+        )
+        if not self.isEnabled():
+            track.setAlpha(110)
+        painter.setBrush(track)
+        painter.drawRoundedRect(QRectF(0, 0, self.width(), self.height()), 13, 13)
+        size = self.height() - 6
+        x = 3 + (self.width() - size - 6) * self._pos
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawEllipse(QRectF(x, 3, size, size))
+        if self.hasFocus():
+            painter.setPen(QPen(QColor(theme.ACCENT), 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(QRectF(1, 1, self.width() - 2, self.height() - 2), 12, 12)
+        painter.end()
 
 
 class ProgressRing(QWidget):

@@ -65,11 +65,17 @@ def test_la_opcion_de_fotos_se_guarda_al_elegirla(qapp, app_with_data):
 
     view = SettingsView(app_with_data, _runner())
     view.refresh()
-    view.publish_images.setCurrentIndex(view.publish_images.findData("rotar"))
+    # De serie viene activado (la opción segura) y se ve con el interruptor.
+    assert view.no_repeat_photos.isChecked()
+    assert "recomendado" in view.no_repeat_label.text()
+    view.no_repeat_photos.click()  # se apaga y se guarda al momento
     ajustes = app_with_data.publish_queue.settings()
-    assert ajustes["rotate_photos"] is True and ajustes["generate_images"] is False
-    view.publish_images.setCurrentIndex(0)
-    assert app_with_data.publish_queue.settings()["rotate_photos"] is False
+    assert ajustes["rotate_photos"] is False and ajustes["generate_images"] is False
+    assert "Desactivado" in view.no_repeat_label.text()
+    view.no_repeat_photos.click()
+    assert app_with_data.publish_queue.settings()["rotate_photos"] is True
+    view.refresh()  # al volver a abrir la pantalla se respeta lo elegido
+    assert view.no_repeat_photos.isChecked()
 
 
 def test_subir_varias_fotos_propias_a_la_vez(qapp, app_with_data, tmp_path):

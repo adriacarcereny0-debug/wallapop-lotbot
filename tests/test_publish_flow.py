@@ -45,7 +45,8 @@ def listo(real, tmp_path):  # noqa: F811
     app.master_ads.add_images(
         None, [{"path": str(foto), "file_format": "JPEG", "width": 1200, "height": 900}]
     )
-    app.publish_queue.save_settings(generate_images=False)
+    # Estas pruebas publican varios anuncios con la misma foto.
+    app.publish_queue.save_settings(generate_images=False, rotate_photos=False)
     app.publish_queue.clock = FakeClock()
     app.backend.service.is_mock = True  # solo para poder usar el reloj de pruebas
     yield app, world, cuenta

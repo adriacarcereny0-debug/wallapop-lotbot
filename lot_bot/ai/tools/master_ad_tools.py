@@ -390,7 +390,10 @@ def _will_generate_images(context: ToolContext) -> tuple[bool, str]:
 
     app = context.app
     if not app.publish_queue.settings()["generate_images"]:
-        if app.publish_queue.settings().get("rotate_photos"):
+        master = app.master_ads.get(None)
+        if app.publish_queue.settings().get("rotate_photos") and app.publish_queue._has_own_photos(
+            master.key if master else None
+        ):
             return False, (
                 "Fotografías: UNA de las tuyas en cada anuncio, sin repetir nunca una foto "
                 "ya publicada (en ninguna cuenta)."

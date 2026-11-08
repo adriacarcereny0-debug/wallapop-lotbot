@@ -75,6 +75,8 @@ MINIMUM_PUBLISH_INTERVAL_SECONDS = 60
 SETTINGS_KEY = "publicacion"
 #: Fotos ya publicadas (para no repetirlas nunca, en ninguna cuenta).
 USED_PHOTOS_KEY = "fotos_usadas"
+#: Marca de que «no repetir fotos» ya se aplicó como opción de serie.
+NO_REPEAT_MIGRATION_KEY = "no_repetir_fotos_v2"
 NO_PHOTOS_MESSAGE = (
     "Añade fotos nuevas: ya se han publicado todas las fotos marcadas del Anuncio "
     "principal y no se repite ninguna. Añádelas en «Anuncio principal» → «Fotografías…» "
@@ -84,9 +86,10 @@ DEFAULT_PUBLISH_SETTINGS: dict[str, Any] = {
     "minimum_publish_interval_seconds": MINIMUM_PUBLISH_INTERVAL_SECONDS,
     # Las imágenes ya no se generan con IA (solo fotos subidas por el usuario).
     "generate_images": False,
-    # Mis fotos: False = todas las marcadas en cada anuncio; True = una
-    # distinta en cada anuncio, rotando entre las marcadas.
-    "rotate_photos": False,
+    # No repetir fotos (la opción segura, activada de serie): una foto
+    # distinta en cada anuncio y nunca una ya publicada. False = todas las
+    # marcadas en cada anuncio.
+    "rotate_photos": True,
     "automatic_retries": 0,  # «una vez» es una vez: sin reintentos automáticos
     # Máximo de anuncios por cuenta (0 = sin límite). Al llegar, se eliminan
     # los MÁS ANTIGUOS para dejar sitio al nuevo.
@@ -331,6 +334,11 @@ class PublishQueue:
         # Generar imágenes con IA está retirado: aunque una configuración
         # antigua lo tenga activado, se publican siempre las fotos propias.
         values["generate_images"] = False
+        # «No repetir fotos» pasa a ser la opción de serie. Una configuración
+        # guardada antes de este cambio (donde «no» era lo de serie) se activa
+        # una vez; si después alguien lo apaga a propósito, se respeta.
+        if not values.get(NO_REPEAT_MIGRATION_KEY):
+            values["rotate_photos"] = True
         return _clamp_pacing(values)
 
     def save_settings(self, **changes: Any) -> dict[str, Any]:
@@ -342,6 +350,7 @@ class PublishQueue:
             changes["automatic_retries"] = max(0, min(3, int(changes["automatic_retries"])))
         merged = _clamp_pacing({**self.settings(), **changes})
         merged["generate_images"] = False  # imágenes con IA: retirado
+        merged[NO_REPEAT_MIGRATION_KEY] = True
         with self._db.session_scope() as session:
             row = session.get(Setting, SETTINGS_KEY)
             if row is None:
@@ -831,7 +840,11 @@ class PublishQueue:
                 service.user_gate = self._user_gate
             only_images = None
             photo_key = None
-            if not image_path and self.settings().get("rotate_photos"):
+            if (
+                not image_path
+                and self.settings().get("rotate_photos")
+                and self._has_own_photos(payload.get("master_key"))
+            ):
                 photo = self._next_rotating_photo(payload.get("master_key"))
                 if photo is None:
                     # No quedan fotos sin publicar: se para y se avisa.
@@ -1256,6 +1269,14 @@ class PublishQueue:
             i for i in self._app.master_ads.effective_images(master)
             if i.get("source") != "demo" and self.photo_key(i) not in used
         ]
+
+    def _has_own_photos(self, master_key: str | None) -> bool:
+        """¿El anuncio principal tiene fotos tuyas marcadas? Sin ninguna (solo
+        las de demostración), no hay nada que rotar y se publica como siempre."""
+        master = self._app.master_ads.get(master_key)
+        return master is not None and any(
+            i.get("source") != "demo" for i in self._app.master_ads.effective_images(master)
+        )
 
     def _next_rotating_photo(self, master_key: str | None) -> dict[str, Any] | None:
         """La primera foto marcada que todavía no se ha publicado en NINGUNA

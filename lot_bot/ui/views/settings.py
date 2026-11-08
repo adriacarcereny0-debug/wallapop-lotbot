@@ -31,6 +31,7 @@ from lot_bot.ui.views.base import BaseView
 from lot_bot.ui.widgets.common import (
     Card,
     SectionTitle,
+    ToggleSwitch,
     ask_confirmation,
     info_box,
     show_error,
@@ -340,7 +341,19 @@ class SettingsView(BaseView):
         self.publish_interval.setRange(60, 3600)
         self.publish_interval.setSuffix(" s")
         form.addRow("Intervalo mínimo entre publicaciones", self.publish_interval)
-        self.publish_images = QComboBox()
+        # Una sola opción, la segura: una foto distinta en cada anuncio y nunca
+        # una ya publicada. Se puede apagar con el interruptor.
+        photo_row = QHBoxLayout()
+        self.no_repeat_photos = ToggleSwitch()
+        self.no_repeat_photos.setAccessibleName("No repetir fotos ya publicadas")
+        self.no_repeat_photos.toggled.connect(self._save_photo_option)
+        photo_row.addWidget(self.no_repeat_photos)
+        self.no_repeat_label = QLabel()
+        self.no_repeat_label.setWordWrap(True)
+        photo_row.addWidget(self.no_repeat_label, 1)
+        form.addRow("No repetir fotos\nya publicadas", photo_row)
+        self.publish_images = QComboBox()  # (antiguo; ya no se muestra)
+        self.publish_images.setVisible(False)
         self.publish_images.addItem(
             "Mis fotos marcadas, todas en cada anuncio («Anuncio principal» → «Fotografías…»)",
             False,
@@ -350,8 +363,6 @@ class SettingsView(BaseView):
             "rotar",
         )
         # Se guarda nada más elegirla (sin pulsar «Aplicar»).
-        self.publish_images.currentIndexChanged.connect(self._save_photo_option)
-        form.addRow("Fotos de cada anuncio", self.publish_images)
         self.used_photos_label = QLabel()
         self.used_photos_label.setWordWrap(True)
         reset_used = QPushButton("Volver a usar las fotos ya publicadas")
@@ -522,7 +533,11 @@ class SettingsView(BaseView):
         self.integration_mode.setCurrentIndex(max(index, 0))
         queue_settings = self.app.publish_queue.settings()
         self.publish_interval.setValue(queue_settings["minimum_publish_interval_seconds"])
-        self.publish_images.blockSignals(True)  # mostrar no es elegir: no se guarda
+        self.no_repeat_photos.blockSignals(True)  # mostrar no es elegir: no se guarda
+        self.no_repeat_photos.setChecked(bool(queue_settings.get("rotate_photos")))
+        self.no_repeat_photos.blockSignals(False)
+        self._update_photo_label()
+        self.publish_images.blockSignals(True)
         if queue_settings["generate_images"]:
             self.publish_images.setCurrentIndex(self.publish_images.findData(True))
         elif queue_settings.get("rotate_photos"):
@@ -683,11 +698,21 @@ class SettingsView(BaseView):
         info_box(self, "Asistente actualizado", f"Modo activo: {provider.describe()}")
         self.refresh()
 
-    def _save_photo_option(self) -> None:
-        choice = self.publish_images.currentData()
-        self.app.publish_queue.save_settings(
-            generate_images=choice is True, rotate_photos=choice == "rotar"
-        )
+    def _save_photo_option(self, *_args) -> None:
+        self.app.publish_queue.save_settings(rotate_photos=self.no_repeat_photos.isChecked())
+        self._update_photo_label()
+
+    def _update_photo_label(self) -> None:
+        if self.no_repeat_photos.isChecked():
+            self.no_repeat_label.setText(
+                "Activado (recomendado): cada anuncio lleva UNA foto distinta de las marcadas y "
+                "nunca se repite una que ya se haya publicado, en ninguna cuenta."
+            )
+        else:
+            self.no_repeat_label.setText(
+                f"<span style='color:{theme.WARNING}'>Desactivado:</span> cada anuncio lleva "
+                "todas las fotos marcadas, aunque ya se hayan publicado antes."
+            )
 
     def _reset_used_photos(self) -> None:
         if not ask_confirmation(
@@ -705,8 +730,7 @@ class SettingsView(BaseView):
         try:
             self.app.publish_queue.save_settings(
                 minimum_publish_interval_seconds=self.publish_interval.value(),
-                generate_images=self.publish_images.currentData() is True,
-                rotate_photos=self.publish_images.currentData() == "rotar",
+                rotate_photos=self.no_repeat_photos.isChecked(),
             )
             if mode != (self.app.integration_mode or "demo"):
                 self.app.set_integration_mode(mode)

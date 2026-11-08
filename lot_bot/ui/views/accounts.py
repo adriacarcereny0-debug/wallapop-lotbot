@@ -451,6 +451,9 @@ class AccountsView(BaseView):
             self.app.audit.record_cancelled("Conexión de cuenta por navegador", target=account.alias)
             self.refresh()
             return
+        from lot_bot.core.demo_cleanup import has_demo_data
+
+        had_demo = has_demo_data(self.app)
         outcome = self.app.accounts.connect(account.internal_ref, method=method, session_check=check)
         if outcome.success:
             self.app.audit.record_success(
@@ -459,7 +462,14 @@ class AccountsView(BaseView):
                 target=account.alias,
                 detail="Sesión comprobada en Wallapop",
             )
-            info_box(self, "Cuenta conectada", f"«{account.alias}» está conectada.")
+            message = f"«{account.alias}» está conectada."
+            if had_demo and not has_demo_data(self.app):
+                message += (
+                    "\n\nComo es tu primera cuenta real, se han borrado las cuentas, anuncios "
+                    "y publicaciones de prueba (DEMO). Tu anuncio principal, tus fotos y tu "
+                    "configuración siguen igual."
+                )
+            info_box(self, "Cuenta conectada", message)
         else:
             show_error(self, outcome.message)
         self.refresh()

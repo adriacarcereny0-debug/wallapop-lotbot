@@ -342,6 +342,10 @@ def create_application(
     )
     app.publish_queue = PublishQueue(db, audit, app)
     app.accounts.connected_listeners.append(app.publish_queue.account_reconnected)
+    # La primera cuenta REAL que se conecta borra todo lo de prueba.
+    from lot_bot.core.demo_cleanup import on_account_connected
+
+    app.accounts.connected_listeners.append(lambda ref: on_account_connected(app, ref))
     app.stats = StatsService(db, app)
     app.analyzer = StatsAnalyzer(app.stats)
     app.optimizer = Optimizer(app.analyzer)

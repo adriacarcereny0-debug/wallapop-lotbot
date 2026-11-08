@@ -161,7 +161,8 @@ def test_publicacion_y_estadisticas_en_modo_navegador(real, tmp_path):
     foto = tmp_path / "canape.jpg"
     Image.new("RGB", (1200, 900), (150, 150, 155)).save(foto)
     app.master_ads.add_images(None, [{"path": str(foto), "file_format": "JPEG", "width": 1200, "height": 900}])
-    app.publish_queue.save_settings(generate_images=False)
+    # Varios anuncios con la misma foto: «no repetir fotos» apagado a propósito.
+    app.publish_queue.save_settings(generate_images=False, rotate_photos=False)
     app.publish_queue.clock = FakeClock()
     app.backend.service.is_mock = True  # solo para poder usar el reloj de pruebas
     try:
