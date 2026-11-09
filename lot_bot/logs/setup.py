@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import sys
 from pathlib import Path
 
 from lot_bot.config.paths import get_paths
@@ -39,15 +40,17 @@ def configure_logging(level: str = "INFO", secrets: dict[str, str] | None = None
     file_handler.setFormatter(formatter)
     file_handler.addFilter(redactor)
 
-    console = logging.StreamHandler()
-    console.setFormatter(formatter)
-    console.addFilter(redactor)
-
     root = logging.getLogger()
     root.handlers.clear()
     root.setLevel(level)
     root.addHandler(file_handler)
-    root.addHandler(console)
+    # Con pythonw (Windows, doble clic) o dentro del .exe/.app no hay consola:
+    # sys.stderr es None y cada mensaje provocaba un error interno de logging.
+    if sys.stderr is not None:
+        console = logging.StreamHandler()
+        console.setFormatter(formatter)
+        console.addFilter(redactor)
+        root.addHandler(console)
 
     # Librerias de terceros: solo avisos, para no llenar el fichero.
     for noisy in ("httpx", "httpcore", "apscheduler", "anthropic", "urllib3", "PIL"):

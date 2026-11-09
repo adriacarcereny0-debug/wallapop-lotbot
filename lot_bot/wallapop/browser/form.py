@@ -86,10 +86,10 @@ def normalize(text: str) -> str:
 
 
 def parse_price(text: str) -> float | None:
-    match = re.search(r"\d+(?:[.,]\d{1,2})?", (text or "").replace(" ", " "))
-    if not match:
-        return None
-    return float(match.group(0).replace(",", "."))
+    """Número del campo de precio («1.250» son 1250 €, «11,44» son 11,44 €)."""
+    from lot_bot.wallapop.prices import number_in
+
+    return number_in(text)
 
 
 @dataclass(slots=True)
@@ -152,6 +152,8 @@ class ListingForm:
         #: Campos en los que ya se ha pulsado una opción (no se repiten).
         self.clicked_steps: set[str] = set()
         self._photos_before = 0
+        #: Se ha pulsado «Publicar» (a partir de ahí, nada se da por fallido).
+        self.submitted = False
 
     # ------------------------------------------------------------------
     # Utilidades
@@ -1030,7 +1032,14 @@ class ListingForm:
     # Publicar y confirmar
     # ------------------------------------------------------------------
     def submit_listing(self) -> None:
-        self._do("Publicar", lambda: self.page.click(self._require("Publicar", self.form.submit)))
+        def action() -> None:
+            target = self._require("Publicar", self.form.submit)
+            # Desde aquí el anuncio PUEDE quedar publicado aunque algo falle
+            # después: nunca se da por «fallido» (se reintentaría y duplicaría).
+            self.submitted = True
+            self.page.click(target)
+
+        self._do("Publicar", action)
 
     def wait_for_publish_confirmation(self) -> str:
         """Devuelve la señal de éxito ('url' o 'texto') o '' si no se confirma."""

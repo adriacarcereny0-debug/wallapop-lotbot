@@ -11,9 +11,10 @@ REGLAS
   la imagen tarda más, se espera más.
 * El intervalo se cuenta entre CUALQUIER par de publicaciones (también entre
   cuentas distintas) y también entre intentos fallidos.
-* Si una publicación falla: se registra el error, el anuncio queda marcado,
-  y solo se reintenta de forma automática una vez más, respetando el
-  intervalo (el doble). Si la sesión ha caducado o Wallapop limita las
+* Si una publicación falla: se registra el error, el anuncio queda marcado
+  y la cola sigue. De serie NO se reintenta solo (`automatic_retries` = 0);
+  si se activa (máximo 3), cada reintento respeta el intervalo (el doble, el
+  cuádruple...). Si la sesión ha caducado o Wallapop limita las
   peticiones, la cola se PAUSA y espera al usuario: nunca se intenta saltar
   un bloqueo.
 * Si Wallapop pide una verificación (CAPTCHA), LOT Bot NUNCA la resuelve: pone
@@ -55,6 +56,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select
@@ -156,6 +158,11 @@ NON_RETRYABLE = {
     "PublishCancelledError",
 }
 UNCONFIRMED_CODE = "RESULTADO_NO_CONFIRMADO"
+INTERRUPTED_MESSAGE = (
+    "LOT Bot se cerró mientras publicaba este anuncio: puede que llegara a publicarse. "
+    "Se buscará en «Tus productos» al terminar la cola; revísalo en Wallapop antes de "
+    "reintentarlo."
+)
 RELOGIN_CODE = "INICIAR_SESION"
 #: Anuncio que espera a que la persona complete una verificación de Wallapop.
 VERIFICATION_CODE = "VERIFICACION"
@@ -339,6 +346,11 @@ class PublishQueue:
         # una vez; si después alguien lo apaga a propósito, se respeta.
         if not values.get(NO_REPEAT_MIGRATION_KEY):
             values["rotate_photos"] = True
+        # Un valor raro guardado a mano no debe tumbar la cola al fallar un anuncio.
+        try:
+            values["automatic_retries"] = max(0, min(3, int(values.get("automatic_retries") or 0)))
+        except (TypeError, ValueError):
+            values["automatic_retries"] = 0
         return _clamp_pacing(values)
 
     def save_settings(self, **changes: Any) -> dict[str, Any]:
@@ -503,13 +515,19 @@ class PublishQueue:
         )
         return count
 
-    def retry_task(self, task_id: int) -> None:
-        """Vuelve a poner en la cola un anuncio fallido."""
+    def retry_task(self, task_id: int, *, allow_unconfirmed: bool = False) -> None:
+        """Vuelve a poner en la cola un anuncio fallido.
+
+        Uno «sin confirmar» (pudo publicarse) solo si la persona lo pide tras
+        revisarlo en Wallapop (`allow_unconfirmed`): nunca de forma automática."""
+        allowed = {PublishTaskStatus.FAILED}
+        if allow_unconfirmed:
+            allowed.add(PublishTaskStatus.UNCONFIRMED)
         with self._db.session_scope() as session:
             task = session.get(PublishTask, task_id)
             if task is None:
                 raise ValueError(f"No existe el anuncio {task_id} de la cola.")
-            if task.status is not PublishTaskStatus.FAILED:
+            if task.status not in allowed:
                 raise ValueError("Solo se pueden reintentar anuncios fallidos.")
             task.status = PublishTaskStatus.PENDING
             task.error = None
@@ -659,6 +677,12 @@ class PublishQueue:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self.recover_interrupted()
+        self._thread = threading.Thread(target=self._loop, name="lotbot-cola", daemon=True)
+        self._thread.start()
+
+    def recover_interrupted(self) -> None:
+        """Al arrancar: deja como estaba lo que se cortó al cerrar LOT Bot."""
         # Una cola que estaba «en marcha» al cerrar el programa se deja en
         # pausa: el usuario decide si sigue.
         with self._db.session_scope() as session:
@@ -678,9 +702,16 @@ class PublishQueue:
                     )
                 )
             ).all():
-                task.status = PublishTaskStatus.PENDING
-        self._thread = threading.Thread(target=self._loop, name="lotbot-cola", daemon=True)
-        self._thread.start()
+                if task.status is PublishTaskStatus.PUBLISHING:
+                    # Se cerró a mitad de publicarlo: pudo llegar a pulsar
+                    # «Publicar». Volver a ponerlo en la cola podría duplicarlo:
+                    # queda «sin confirmar» y se busca en «Tus productos» al
+                    # terminar la cola (o lo reintenta la persona tras mirarlo).
+                    task.status = PublishTaskStatus.UNCONFIRMED
+                    task.error = INTERRUPTED_MESSAGE
+                    task.error_code = UNCONFIRMED_CODE
+                else:
+                    task.status = PublishTaskStatus.PENDING
 
     def shutdown(self, timeout: float = 5.0) -> None:
         self._stop.set()
@@ -1265,10 +1296,20 @@ class PublishQueue:
         if master is None:
             return []
         used = self.used_photos()
-        return [
+        unused = [
             i for i in self._app.master_ads.effective_images(master)
             if i.get("source") != "demo" and self.photo_key(i) not in used
         ]
+        # Una foto borrada del ordenador no se puede subir: si se eligiera,
+        # fallarían uno tras otro todos los anuncios (siempre sería «la
+        # siguiente»). Se salta y se avisa en el registro.
+        present = [i for i in unused if i.get("path") and Path(i["path"]).is_file()]
+        if len(present) < len(unused):
+            logger.warning(
+                "%d foto(s) marcada(s) del Anuncio principal ya no están en el ordenador: se saltan.",
+                len(unused) - len(present),
+            )
+        return present
 
     def _has_own_photos(self, master_key: str | None) -> bool:
         """¿El anuncio principal tiene fotos tuyas marcadas? Sin ninguna (solo

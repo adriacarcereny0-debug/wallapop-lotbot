@@ -39,15 +39,27 @@ def _keyring():
         return None
 
 
+class _KeyringFailed(Exception):
+    """El llavero existe pero no ha respondido (bloqueado, permiso denegado...)."""
+
+
 def _read_key_from_keyring() -> str | None:
+    """La clave del llavero; None si no hay llavero o no tiene clave.
+
+    Lanza `_KeyringFailed` si el llavero EXISTE pero falla al leer: en ese
+    caso no se puede dar por hecho que no haya clave (crear otra dejaría
+    ilegibles las claves de API y credenciales ya guardadas)."""
     kr = _keyring()
     if kr is None:
         return None
     try:
         return kr.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
-    except Exception as exc:  # pragma: no cover - backend no disponible
-        logger.debug("Llavero del sistema no disponible: %s", type(exc).__name__)
-        return None
+    except Exception as exc:  # pragma: no cover - depende del sistema
+        if type(exc).__name__ == "NoKeyringError":
+            logger.debug("Sin llavero del sistema: se usa el fichero local.")
+            return None
+        logger.warning("El llavero del sistema no responde (%s).", type(exc).__name__)
+        raise _KeyringFailed(type(exc).__name__) from exc
 
 
 def _write_key_to_keyring(key: str) -> bool:
@@ -102,7 +114,20 @@ def get_master_key() -> bytes:
     if env_key:
         return _normalise_key(env_key)
 
-    stored = _read_key_from_keyring() or _read_key_from_file()
+    try:
+        stored = _read_key_from_keyring() or _read_key_from_file()
+    except _KeyringFailed:
+        stored = _read_key_from_file()
+        if stored:
+            return _normalise_key(stored)
+        # El llavero tiene (probablemente) la clave pero hoy no responde. NO se
+        # crea ni se guarda otra: se usa una temporal solo en esta sesión y la
+        # próxima vez se vuelve a leer la buena del llavero.
+        logger.warning(
+            "No se ha podido leer la clave maestra del llavero: las claves guardadas no "
+            "se podrán leer en esta sesión. Reinicia LOT Bot (y permite el acceso al llavero)."
+        )
+        return Fernet.generate_key()
     if stored:
         return _normalise_key(stored)
 

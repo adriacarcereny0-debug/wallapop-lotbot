@@ -52,7 +52,12 @@ class Database:
             self.url,
             echo=echo,
             future=True,
-            connect_args={"check_same_thread": False} if self.url.startswith("sqlite") else {},
+            # Varios hilos escriben a la vez (cola, interfaz, navegadores): si
+            # la base está ocupada se espera hasta 30 s en vez de fallar con
+            # «database is locked» a los 5 s.
+            connect_args={"check_same_thread": False, "timeout": 30}
+            if self.url.startswith("sqlite")
+            else {},
         )
         if self.url.startswith("sqlite"):
             event.listen(self.engine, "connect", _enable_sqlite_pragmas)

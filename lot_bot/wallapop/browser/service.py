@@ -48,6 +48,7 @@ from lot_bot.wallapop.errors import (
     ProfileInUseError,
     VerificationRequiredError,
 )
+from lot_bot.wallapop.prices import PRICE_RE, first_price, prices_in
 from lot_bot.wallapop.service import WallapopService
 
 logger = logging.getLogger(__name__)
@@ -92,20 +93,12 @@ def _norm(text: str) -> str:
     return " ".join(plain.lower().split())
 
 
-_PRICE_RE = re.compile(r"(\d{1,3}(?:[.\s]\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*€")
+_PRICE_RE = PRICE_RE
 
 
 def _card_price(text: str) -> float | None:
-    match = _PRICE_RE.search((text or "").replace("\xa0", " "))
-    if not match:
-        return None
-    raw = match.group(1).replace(" ", "")
-    if "," in raw:
-        raw = raw.replace(".", "").replace(",", ".")
-    try:
-        return float(raw)
-    except ValueError:
-        return None
+    """Precio de la ficha («1.250 €» son 1250 €, no 1,25 €)."""
+    return first_price(text)
 
 
 def _card_title(text: str) -> str:
@@ -116,13 +109,8 @@ def _card_title(text: str) -> str:
 
 
 def _shows_price(text: str, price: float) -> bool:
-    """¿La página muestra ese precio? (100 €, 100,00 €, 11,44 €, 11.44 €…)"""
-    flat = (text or "").replace("\xa0", " ")
-    return any(
-        abs(float(m.group(1).replace(" ", "").replace(".", "").replace(",", ".")
-                  if "," in m.group(1) else m.group(1).replace(" ", "")) - price) < 0.005
-        for m in _PRICE_RE.finditer(flat)
-    )
+    """¿La página muestra ese precio? (100 €, 100,00 €, 1.250 €, 11,44 €, 11.44 €…)"""
+    return any(abs(value - float(price)) < 0.005 for value in prices_in(text))
 
 
 def format_price(price: float, style: str) -> str:
@@ -451,7 +439,21 @@ class BrowserWallapopService(WallapopService):
                     user_message=RELOGIN_MESSAGE,
                 )
             form.steps.append("Comprobar sesión")
-            return form.run()
+            try:
+                return form.run()
+            except Exception as exc:
+                if not form.submitted:
+                    raise
+                # Ya se pulsó «Publicar»: puede estar publicado. Queda «sin
+                # confirmar» (se busca en «Tus productos»), nunca «fallido».
+                logger.warning(
+                    "Error después de pulsar «Publicar» en %s (%s): resultado sin confirmar.",
+                    account_ref, type(exc).__name__,
+                )
+                return PublishReport(
+                    confirmed=False, url=None, item_id=None,
+                    steps=list(form.steps), skipped=list(form.skipped),
+                )
 
         while True:
             try:
@@ -538,6 +540,9 @@ class BrowserWallapopService(WallapopService):
     def search_items(self, account_ref: str, query: ItemSearchQuery) -> list[Item]:
         self._unavailable(Capability.SEARCH_ITEMS)
 
+    #: Lo que se espera a que cargue la página al comprobar un cambio o un borrado.
+    CHECK_WAIT_S = 10.0
+
     def update_item(
         self,
         account_ref: str,
@@ -608,14 +613,26 @@ class BrowserWallapopService(WallapopService):
                 raise fail("guardar", "No aparece el botón para guardar los cambios.")
             page.click(save)
             page.wait(2500)
-            # Comprobación: se vuelve a abrir el anuncio y se lee.
+            # Comprobación: se vuelve a abrir el anuncio y se lee. Se espera a
+            # que la página cargue (si va lenta, no es que no se haya guardado).
             page.goto(url)
             page.wait(1500)
-            text = page.body_text()
-            if "price" in changes and not _shows_price(text, float(changes["price"])):
-                raise fail("comprobar", f"El anuncio no muestra el precio {changes['price']} € tras guardar.")
-            if "title" in changes and _norm(str(changes["title"])) not in _norm(text):
-                raise fail("comprobar", "El anuncio no muestra el título nuevo tras guardar.")
+
+            def problem() -> str | None:
+                text = page.body_text()
+                if "price" in changes and not _shows_price(text, float(changes["price"])):
+                    return f"El anuncio no muestra el precio {changes['price']} € tras guardar."
+                if "title" in changes and _norm(str(changes["title"])) not in _norm(text):
+                    return "El anuncio no muestra el título nuevo tras guardar."
+                return None
+
+            deadline = time.monotonic() + self.CHECK_WAIT_S
+            issue = problem()
+            while issue and time.monotonic() < deadline:
+                page.wait(1000)
+                issue = problem()
+            if issue:
+                raise fail("comprobar", issue)
 
         self._in_browser(account_ref, edit, timeout=600)
         what = " y ".join(
@@ -636,10 +653,15 @@ class BrowserWallapopService(WallapopService):
         url = self._item_url(item_id, item_url)
         timeout = self.site.timeout_ms
 
-        def gone(page: BrowserPage) -> bool:
-            if cfg.gone and page.first_visible(cfg.gone, 0):
-                return True
-            return page.first_visible(cfg.button + cfg.menu, 0) is None
+        def gone(page: BrowserPage, wait_ms: int = 0) -> bool:
+            """¿Ya no está? Se espera (hasta `wait_ms`) a que la página muestre
+            o el aviso de «no existe» o los botones del anuncio: una página que
+            aún está cargando NO es un anuncio eliminado."""
+            markers = (cfg.gone or []) + cfg.button + cfg.menu
+            found = page.first_visible(markers, wait_ms) if markers else None
+            if found is None:
+                return True  # cargada y sin los botones del anuncio: ya no está
+            return bool(cfg.gone) and found in cfg.gone
 
         def remove(page: BrowserPage) -> str:
             def fail(step: str, detail: str) -> BrowserStepError:
@@ -683,7 +705,7 @@ class BrowserWallapopService(WallapopService):
             # Comprobación final: se vuelve a abrir el anuncio.
             page.goto(url)
             page.wait(1500)
-            if not gone(page):
+            if not gone(page, int(self.CHECK_WAIT_S * 1000)):
                 raise fail("comprobar", "Tras eliminarlo, el anuncio sigue apareciendo en Wallapop.")
             return "eliminado"
 

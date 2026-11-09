@@ -39,6 +39,8 @@ class _AccountWorker:
         options: dict[str, Any],
         idle_seconds: float,
         on_exit: Callable[[str, _AccountWorker], None],
+        retire: Callable[[_AccountWorker], bool] | None = None,
+        previous: _AccountWorker | None = None,
     ) -> None:
         self.ref = ref
         self._launcher = launcher
@@ -46,6 +48,11 @@ class _AccountWorker:
         self._options = options
         self._idle = idle_seconds
         self._on_exit = on_exit
+        #: retire(worker) -> bool: deja de recibir trabajos (atómico con `run`).
+        self._retire = retire
+        #: Navegador anterior de la misma cuenta que aún se está cerrando:
+        #: Chrome no deja abrir el mismo perfil dos veces a la vez.
+        self._previous = previous
         self._jobs: queue.Queue = queue.Queue()
         self.opened = False
         self._thread = threading.Thread(target=self._run, name=f"lotbot-nav-{ref}", daemon=True)
@@ -71,11 +78,29 @@ class _AccountWorker:
             if item is not _STOP:
                 item[1].set_exception(exc)
 
+    def _next_job(self):
+        """Siguiente trabajo, o None si lleva `idle` segundos sin ninguno.
+
+        Antes, un trabajo que llegaba justo cuando el navegador se cerraba por
+        inactividad se quedaba sin atender y la publicación esperaba hasta el
+        tiempo máximo (hasta una hora). Ahora el navegador se retira de la
+        lista ANTES de cerrarse y, si en ese instante llega un trabajo, lo
+        atiende."""
+        while True:
+            try:
+                return self._jobs.get(timeout=self._idle)
+            except queue.Empty:
+                if self._retire is None or self._retire(self):
+                    return None
+
     def _run(self) -> None:
         """Abre el perfil y atiende operaciones. Si el usuario cierra la
         ventana o la pestaña, se vuelve a abrir el MISMO perfil (con su
         sesión) en la siguiente operación: cerrar la ventana no desconecta."""
         try:
+            if self._previous is not None:
+                self._previous.join(30.0)
+                self._previous = None
             item = self._jobs.get()
             reopen = 0
             while item is not _STOP:
@@ -109,9 +134,8 @@ class _AccountWorker:
                                         self._fail_pending(closed)
                                         return
                                     future.set_exception(exc)
-                            try:
-                                item = self._jobs.get(timeout=self._idle)
-                            except queue.Empty:
+                            item = self._next_job()
+                            if item is None:
                                 logger.info("Navegador de %s cerrado por inactividad.", self.ref)
                                 return
                 except BaseException as exc:  # no se pudo abrir el navegador
@@ -160,6 +184,8 @@ class BrowserSessionPool:
         #: Cuentas cuyo navegador está esperando a una PERSONA (verificación,
         #: iniciar sesión...): ese tiempo no cuenta como «no responde».
         self._waiting_user: dict[str, int] = {}
+        #: Navegadores que se están cerrando (por inactividad).
+        self._closing: dict[str, _AccountWorker] = {}
 
     @contextmanager
     def waiting_for_user(self, ref: str) -> Iterator[None]:
@@ -185,6 +211,19 @@ class BrowserSessionPool:
         with self._lock:
             if self._workers.get(ref) is worker:
                 del self._workers[ref]
+            if self._closing.get(ref) is worker:
+                del self._closing[ref]
+
+    def _retire(self, worker: _AccountWorker) -> bool:
+        """El navegador va a cerrarse por inactividad. Si justo ha llegado un
+        trabajo, sigue abierto (False); si no, deja de recibir trabajos."""
+        with self._lock:
+            if not worker._jobs.empty():
+                return False
+            if self._workers.get(worker.ref) is worker:
+                del self._workers[worker.ref]
+                self._closing[worker.ref] = worker
+            return True
 
     def run(
         self,
@@ -200,7 +239,8 @@ class BrowserSessionPool:
             worker = self._workers.get(ref)
             if worker is None:
                 worker = _AccountWorker(
-                    ref, self._launcher, profile_dir, options, self._idle, self._exit
+                    ref, self._launcher, profile_dir, options, self._idle, self._exit,
+                    retire=self._retire, previous=self._closing.get(ref),
                 )
                 self._workers[ref] = worker
                 self.open_count[ref] = self.open_count.get(ref, 0) + 1

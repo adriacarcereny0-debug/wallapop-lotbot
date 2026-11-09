@@ -242,7 +242,24 @@ class PublishQueueView(BaseView):
     def _retry(self) -> None:
         selected = selected_row_data(self.table)
         progress = self.app.publish_queue.progress(self._job_id)
-        failed = [t["id"] for t in progress.tasks if t["estado"] == "failed"] if progress else []
+        tasks = progress.tasks if progress else []
+        failed = [t["id"] for t in tasks if t["estado"] == "failed"]
+        unconfirmed = [t["id"] for t in tasks if t["estado"] == "unconfirmed"]
+        # Uno «sin confirmar» solo si lo has elegido tú y tras avisar: pudo publicarse.
+        chosen = next((t for t in selected if t in unconfirmed), None)
+        if chosen is not None:
+            if ask_confirmation(
+                self,
+                "Reintentar anuncio sin confirmar",
+                "Wallapop no confirmó este anuncio: puede que YA esté publicado. Míralo en "
+                "Wallapop («Tus productos») antes de reintentarlo, o tendrás un duplicado.\n\n"
+                "¿Ya lo has comprobado y NO está publicado?",
+                destructive=True,
+            ):
+                self._safe(
+                    lambda: self.app.publish_queue.retry_task(chosen, allow_unconfirmed=True)
+                )
+            return
         target = next((t for t in selected if t in failed), failed[0] if failed else None)
         if target is not None:
             self._safe(lambda: self.app.publish_queue.retry_task(target))
