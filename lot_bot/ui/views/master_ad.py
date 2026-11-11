@@ -49,14 +49,15 @@ def _split(text: str, separator: str = ",") -> list[str]:
 
 
 class PublishDialog(QDialog):
-    """Elegir cuentas y número de publicaciones."""
+    """Elegir cuentas (las que quieras: 2 de 4, 3 de 5...) y número de publicaciones."""
 
     def __init__(self, app, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Publicar el anuncio principal")
         self.setMinimumWidth(460)
+        self.app = app
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("¿En qué cuentas quieres publicarlo?"))
+        layout.addWidget(QLabel("¿En qué cuentas quieres publicarlo? Marca las que quieras."))
         self.checks: list[tuple[str, QCheckBox]] = []
         for account in app.accounts.list_accounts():
             usable = account.is_connected and (app.demo_mode or not account.is_demo)
@@ -64,8 +65,20 @@ class PublishDialog(QDialog):
             box = QCheckBox(label)
             box.setChecked(usable)
             box.setEnabled(usable)
+            box.toggled.connect(self._update_count)
             layout.addWidget(box)
             self.checks.append((account.internal_ref, box))
+        quick = QHBoxLayout()
+        self.count_label = QLabel()
+        self.count_label.setStyleSheet(f"color: {theme.TEXT_MUTED};")
+        quick.addWidget(self.count_label, 1)
+        mark_all = QPushButton("Todas")
+        mark_all.clicked.connect(lambda: self._mark(True))
+        quick.addWidget(mark_all)
+        mark_none = QPushButton("Ninguna")
+        mark_none.clicked.connect(lambda: self._mark(False))
+        quick.addWidget(mark_none)
+        layout.addLayout(quick)
 
         form = QFormLayout()
         self.copies = QSpinBox()
@@ -79,14 +92,31 @@ class PublishDialog(QDialog):
         self.price.setSpecialValueText("El de la plantilla")
         form.addRow("Precio solo para estas", self.price)
         layout.addLayout(form)
+        self.parallel = QCheckBox(
+            "Publicar en las cuentas marcadas A LA VEZ (cada una con su propio navegador)"
+        )
+        self.parallel.setChecked(bool(app.publish_queue.settings().get("parallel_accounts")))
+        layout.addWidget(self.parallel)
         hint = QLabel(
-            "Si indicas un número, las publicaciones se reparten por turnos entre las "
-            "cuentas marcadas. Un precio aquí solo afecta a estas publicaciones: la "
-            "plantilla no cambia."
+            "Si indicas un número, las publicaciones se reparten entre las cuentas marcadas. "
+            "A la vez: cada cuenta publica sus anuncios en su navegador, al mismo tiempo que "
+            "las demás y respetando su propio ritmo. Si no, de una en una, por turnos. Un "
+            "precio aquí solo afecta a estas publicaciones: la plantilla no cambia."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {theme.TEXT_MUTED};")
         layout.addWidget(hint)
+        missing = app.publish_queue.missing_photos(None)
+        if missing:
+            warning = QLabel(
+                f"⚠ Faltan {len(missing)} foto(s) marcada(s): "
+                + ", ".join(f"«{m['nombre']}» ({m['motivo']})" for m in missing[:5])
+                + (" …" if len(missing) > 5 else "")
+                + ". No se publicará con menos fotos sin preguntarte."
+            )
+            warning.setWordWrap(True)
+            warning.setStyleSheet(f"color: {theme.WARNING};")
+            layout.addWidget(warning)
 
         buttons = spanish_buttons(
             QDialogButtonBox(
@@ -97,12 +127,27 @@ class PublishDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self._update_count()
+
+    def _mark(self, on: bool) -> None:
+        for _ref, box in self.checks:
+            if box.isEnabled():
+                box.setChecked(on)
+
+    def _update_count(self, *_args) -> None:
+        usable = [box for _ref, box in self.checks if box.isEnabled()]
+        marked = sum(1 for box in usable if box.isChecked())
+        self.count_label.setText(f"{marked} de {len(usable)} cuentas marcadas")
+        self.parallel.setEnabled(marked > 1)
 
     def selection(self) -> tuple[list[str], int | None, dict]:
         refs = [ref for ref, box in self.checks if box.isChecked()]
         copies = self.copies.value() or None
         overrides = {"price": self.price.value()} if self.price.value() > 0 else {}
         return refs, copies, overrides
+
+    def parallel_selected(self) -> bool:
+        return self.parallel.isEnabled() and self.parallel.isChecked()
 
 
 class MasterAdView(BaseView):
@@ -282,6 +327,16 @@ class MasterAdView(BaseView):
             self.notice.setText(
                 f"<b style='color:{theme.SUCCESS}'>WALLAPOP REAL</b> — publicar crea anuncios "
                 f"de verdad en las cuentas elegidas, siempre con confirmación previa."
+            )
+        missing = self.app.publish_queue.missing_photos(master.key)
+        if missing:
+            names = ", ".join(f"«{m['nombre']}» ({m['motivo']})" for m in missing[:5])
+            more = f" y {len(missing) - 5} más" if len(missing) > 5 else ""
+            self.notice.setText(
+                self.notice.text()
+                + f"<br><b style='color:{theme.WARNING}'>⚠ Faltan {len(missing)} foto(s) "
+                f"marcada(s):</b> {names}{more}. Vuelve a añadirlas en «Fotografías…» o "
+                f"desmárcalas; no se publicará con menos fotos sin preguntarte."
             )
 
         self.name.setText(master.name)
@@ -483,6 +538,7 @@ class MasterAdView(BaseView):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         refs, copies, overrides = dialog.selection()
+        parallel = dialog.parallel_selected()
         if not refs:
             show_error(self, "Marca al menos una cuenta conectada.")
             return
@@ -504,16 +560,33 @@ class MasterAdView(BaseView):
             reasons = sorted({i.message for p in blocked for i in (p.quality.errors if p.quality else [])})
             text += f"\n\nNO se podrán publicar {len(blocked)}: " + "; ".join(reasons)
         queue = self.app.publish_queue
-        text += (
-            f"\n\nSe publicarán de uno en uno, con al menos {queue.interval} segundos entre "
-            f"publicaciones. Puedes seguir el progreso en «Publicación automática»."
-        )
+        if parallel:
+            text += (
+                f"\n\nSe publicarán A LA VEZ en {len(counts)} cuentas: cada una con su propio "
+                f"navegador y su propia cola, con al menos {queue.interval} segundos entre sus "
+                f"anuncios y respetando su ritmo. Puedes seguir el progreso en «Publicación "
+                f"automática»."
+            )
+        else:
+            text += (
+                f"\n\nSe publicarán de uno en uno, con al menos {queue.interval} segundos entre "
+                f"publicaciones. Puedes seguir el progreso en «Publicación automática»."
+            )
+        missing = queue.missing_photos(master.key)
+        if missing:
+            text += (
+                f"\n\n⚠ Faltan {len(missing)} foto(s) marcada(s) ("
+                + ", ".join(m["nombre"] for m in missing[:5])
+                + "). Antes de publicar con menos fotos, la cola se parará y te lo preguntará."
+            )
         if self.app.demo_mode:
             text += "\n\nMODO DEMO: no se enviará nada a Wallapop; es una simulación."
         if not ask_confirmation(self, "Confirmar publicación", text):
             return
         try:
-            queue.enqueue_master(master.key, refs, copies, overrides, actor="usuario")
+            queue.enqueue_master(
+                master.key, refs, copies, overrides, actor="usuario", parallel=parallel
+            )
         except ValueError as exc:
             show_error(self, str(exc))
             return

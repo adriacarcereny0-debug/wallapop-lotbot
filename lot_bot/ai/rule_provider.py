@@ -182,9 +182,13 @@ class RuleBasedProvider(AIProvider):
         ):
             return call(
                 "start_publishing",
-                cuenta=accounts[0] if accounts else None,
+                cuenta=accounts[0] if accounts and len(accounts) == 1 else None,
+                cuentas=accounts if accounts and len(accounts) > 1 else None,
                 copias=copies,
                 texto=text,
+                a_la_vez=True
+                if re.search(r"\b(a la vez|al mismo tiempo|simultane\w*|en paralelo)\b", normalized)
+                else None,
             )
 
         # --- 0a. Estadísticas, análisis y recomendaciones ---

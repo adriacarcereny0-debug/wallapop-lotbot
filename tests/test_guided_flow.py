@@ -21,7 +21,7 @@ def textos(respuesta) -> str:
 def test_empezar_a_subir_pregunta_la_cuenta_y_cuantos(app):
     agente = app.agent
     r = agente.ask("Empieza a subir anuncios cada 60 segundos")
-    assert "¿En qué cuenta lo quieres?" in textos(r)
+    assert "¿En qué cuentas lo quieres?" in textos(r)
     assert "Cuenta 2 (DEMO)" in textos(r)
     assert not r.needs_confirmation
 
@@ -46,7 +46,7 @@ def test_cuenta_desconocida_vuelve_a_preguntar(app):
     agente = app.agent
     agente.ask("Empieza a subir anuncios")
     r = agente.ask("la cuenta de mi primo")
-    assert "No encuentro la cuenta" in textos(r) and "¿En qué cuenta lo quieres?" in textos(r)
+    assert "No encuentro la cuenta" in textos(r) and "¿En qué cuentas lo quieres?" in textos(r)
     r = agente.ask("todas")
     assert "¿Cuántos anuncios" in textos(r)
     r = agente.ask("cinco")

@@ -12,6 +12,7 @@ Garantías:
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from typing import Any
 
@@ -231,10 +232,24 @@ def _publish_master_ad(context: ToolContext, args: dict[str, Any]) -> ToolResult
             lines.append(f"Aviso (no bloquea): {warning}")
         queue = context.app.publish_queue
         images = _will_generate_images(context)
-        lines.append(
-            f"Se publicarán de uno en uno, con al menos {queue.interval} segundos entre "
-            f"publicaciones (también entre cuentas distintas)."
-        )
+        if _parallel(context, args, distribution):
+            lines.append(
+                f"Se publicarán A LA VEZ en {len(distribution)} cuentas: cada una con su propio "
+                f"navegador y su propia cola, con al menos {queue.interval} segundos entre sus "
+                f"anuncios y respetando su ritmo."
+            )
+        else:
+            lines.append(
+                f"Se publicarán de uno en uno, con al menos {queue.interval} segundos entre "
+                f"publicaciones (también entre cuentas distintas)."
+            )
+        missing = queue.missing_photos(master.key)
+        if missing:
+            lines.append(
+                f"⚠ Faltan {len(missing)} foto(s) marcada(s): "
+                + ", ".join(f"«{m['nombre']}» ({m['motivo']})" for m in missing[:5])
+                + ". Antes de publicar con menos fotos, la cola se parará y te lo preguntará."
+            )
         lines.append(images[1])
         if not images[0] and queue.settings().get("rotate_photos"):
             unused = len(queue.unused_photos(master.key))
@@ -261,6 +276,7 @@ def _publish_master_ad(context: ToolContext, args: dict[str, Any]) -> ToolResult
             overrides,
             generate_images=_will_generate_images(context)[0],
             actor=context.actor,
+            parallel=args.get("a_la_vez"),
         )
     except ValueError as exc:
         return fail(str(exc))
@@ -313,8 +329,39 @@ def _ask(question: str, args: dict[str, Any], stage: str) -> ToolResult:
     )
 
 
+_ALL_WORDS = ("todas", "todos", "cualquiera", "las dos", "ambas")
+_TOGETHER = re.compile(r"\b(a la vez|al mismo tiempo|simultane\w*|en paralelo)\b")
+
+
+def _pick_accounts(answer: str, accounts: list) -> list[str]:
+    """Las cuentas que dice la persona: «todas», «1 y 3», «Mi tienda y Norte»,
+    «las cuentas 2, 4 y 5»... (las que quiera, no solo una o todas)."""
+    text = (answer or "").lower()
+    if any(word in text for word in _ALL_WORDS):
+        return [a.internal_ref for a in accounts]
+    chosen: list[str] = []
+    rest = text
+    # Por nombre (primero los más largos: «Cuenta 10» antes que «Cuenta 1»).
+    for account in sorted(accounts, key=lambda a: -len(a.alias)):
+        name = account.alias.lower()
+        if name and re.search(rf"(?<!\w){re.escape(name)}(?!\w)", rest):
+            chosen.append(account.internal_ref)
+            rest = re.sub(rf"(?<!\w){re.escape(name)}(?!\w)", " ", rest)
+    # Por número: «1 y 3» = la 1.ª y la 3.ª de la lista (o «Cuenta 1», «Cuenta 3»).
+    for number in re.findall(r"\b(\d{1,2})\b(?!\s*anuncio)", rest):
+        n = int(number)
+        named = next(
+            (a for a in accounts if re.match(rf"cuenta {n}(?!\d)", a.alias.lower())), None
+        )
+        target = named or (accounts[n - 1] if 1 <= n <= len(accounts) else None)
+        if target is not None and target.internal_ref not in chosen:
+            chosen.append(target.internal_ref)
+    order = [a.internal_ref for a in accounts]
+    return sorted(chosen, key=order.index)
+
+
 def _start_publishing(context: ToolContext, args: dict[str, Any]) -> ToolResult:
-    """Flujo guiado: ¿en qué cuenta? → ¿cuántos? → plan con confirmación."""
+    """Flujo guiado: ¿en qué cuentas? → ¿cuántos? → plan con confirmación."""
     accounts = _usable_accounts(context)
     if not accounts:
         return fail(
@@ -327,20 +374,21 @@ def _start_publishing(context: ToolContext, args: dict[str, Any]) -> ToolResult:
     state = {k: v for k, v in args.items() if v not in (None, "", [])}
 
     if stage == "cuenta" and answer:
-        lowered = answer.lower()
-        if any(w in lowered for w in ("todas", "todos", "cualquiera", "las dos", "ambas")):
-            state["cuentas"] = [a.internal_ref for a in accounts]
-        else:
+        picked = _pick_accounts(answer, accounts)
+        if not picked:
             ref = context.app.accounts.resolve_ref(answer)
-            usable = {a.internal_ref for a in accounts}
-            if ref not in usable:
-                return _ask(
-                    f"No encuentro la cuenta «{answer}». ¿En qué cuenta lo quieres? "
-                    f"Cuentas conectadas: {names} (o «todas»).",
-                    state,
-                    "cuenta",
-                )
-            state["cuentas"] = [ref]
+            picked = [ref] if ref in {a.internal_ref for a in accounts} else []
+        if not picked:
+            return _ask(
+                f"No encuentro la cuenta «{answer}». ¿En qué cuentas lo quieres? Puedes "
+                f"elegir las que quieras (p. ej. «1 y 3»). Cuentas conectadas: {names} "
+                f"(o «todas»).",
+                state,
+                "cuenta",
+            )
+        state["cuentas"] = picked
+        if _TOGETHER.search(answer.lower()):
+            state["a_la_vez"] = True
         # «Cuenta 2» no son 2 anuncios: solo cuenta un número seguido de «anuncios».
         import re
 
@@ -355,6 +403,11 @@ def _start_publishing(context: ToolContext, args: dict[str, Any]) -> ToolResult:
             )
         state["copias"] = count
 
+    if state.get("cuentas") and stage != "cuenta":
+        # Nombres que dio la persona en la frase («cuentas 1 y 3»): a referencias.
+        refs, _missing = _target_accounts(context, state["cuentas"])
+        usable = {a.internal_ref for a in accounts}
+        state["cuentas"] = [r for r in refs if r in usable] or None
     if not state.get("cuentas"):
         requested = state.get("cuenta")
         if requested:
@@ -363,17 +416,20 @@ def _start_publishing(context: ToolContext, args: dict[str, Any]) -> ToolResult:
                 state["cuentas"] = [ref]
         text = str(state.pop("texto", "") or "").lower()
         if not state.get("cuentas") and text:
-            # «…en la cuenta Mi tienda»: nombre de cuenta dentro de la frase.
-            named = [a for a in accounts if a.alias.lower() in text]
-            if len(named) == 1:
-                state["cuentas"] = [named[0].internal_ref]
+            # «…en las cuentas Mi tienda y Norte»: nombres de cuenta en la frase.
+            named = [a.internal_ref for a in accounts if a.alias.lower() in text]
+            if named:
+                state["cuentas"] = named
         if not state.get("cuentas"):
             state.pop("cuenta", None)
             return _ask(
-                f"¿En qué cuenta lo quieres? Cuentas conectadas: {names} (o «todas»).",
+                f"¿En qué cuentas lo quieres? Elige las que quieras (p. ej. «1 y 3») o "
+                f"«todas». Cuentas conectadas: {names}.",
                 state,
                 "cuenta",
             )
+    else:
+        state.pop("texto", None)
     if not state.get("copias"):
         return _ask(
             f"¿Cuántos anuncios quieres subir? Se publicará uno cada "
@@ -381,7 +437,18 @@ def _start_publishing(context: ToolContext, args: dict[str, Any]) -> ToolResult:
             state,
             "copias",
         )
-    return _publish_master_ad(context, {"cuentas": state["cuentas"], "copias": int(state["copias"])})
+    final = {"cuentas": state["cuentas"], "copias": int(state["copias"])}
+    if state.get("a_la_vez") is not None:
+        final["a_la_vez"] = bool(state["a_la_vez"])
+    return _publish_master_ad(context, final)
+
+
+def _parallel(context: ToolContext, args: dict[str, Any], distribution) -> bool:
+    """¿Se publicará en varias cuentas a la vez? (lo pedido o la configuración)."""
+    wanted = args.get("a_la_vez")
+    if wanted is None:
+        wanted = context.app.publish_queue.settings().get("parallel_accounts")
+    return bool(wanted) and len(distribution) > 1
 
 
 def _will_generate_images(context: ToolContext) -> tuple[bool, str]:
@@ -603,11 +670,19 @@ MASTER_AD_TOOLS: list[Tool] = [
         ),
         parameters={
             "properties": {
-                "cuentas": {"type": "array", "items": {"type": "string"}},
+                "cuentas": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Las cuentas elegidas (las que quiera el usuario, p. ej. 2 de 4).",
+                },
                 "copias": {"type": "integer"},
                 "cambios": {
                     "type": "object",
                     "description": "Cambios solo para estas publicaciones, no para la plantilla.",
+                },
+                "a_la_vez": {
+                    "type": "boolean",
+                    "description": "Publicar en las cuentas a la vez (cada una con su navegador).",
                 },
             },
             "required": [],
@@ -627,6 +702,12 @@ MASTER_AD_TOOLS: list[Tool] = [
         parameters={
             "properties": {
                 "cuenta": {"type": "string", "description": "Nombre de la cuenta, si lo ha dicho."},
+                "cuentas": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Varias cuentas, si las ha dicho (p. ej. «cuentas 1 y 3»).",
+                },
+                "a_la_vez": {"type": "boolean", "description": "Si pide publicar a la vez."},
                 "copias": {"type": "integer", "description": "Número de anuncios, si lo ha dicho."},
                 "texto": {"type": "string", "description": "Frase original del usuario."},
             },

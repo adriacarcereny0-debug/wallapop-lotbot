@@ -503,6 +503,9 @@ class PublishJob(Base, TimestampMixin):
     interval_seconds: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
     generate_images: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: Varias cuentas a la vez: cada cuenta publica sus anuncios en su propio
+    #: hilo y su propio navegador (False = por turnos, de uno en uno).
+    parallel: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     actor: Mapped[str] = mapped_column(String(60), default="usuario", nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)

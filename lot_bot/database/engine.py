@@ -35,6 +35,9 @@ LIGHT_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("url", "TEXT"),
         ("meta", "JSON"),
     ],
+    "publish_jobs": [
+        ("parallel", "BOOLEAN NOT NULL DEFAULT 0"),
+    ],
     "generated_images": [
         ("operation", "VARCHAR(40)"),
         ("scene", "JSON"),

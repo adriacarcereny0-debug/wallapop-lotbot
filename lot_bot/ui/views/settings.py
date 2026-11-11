@@ -412,11 +412,33 @@ class SettingsView(BaseView):
             "entre anuncios durante este tiempo.",
         )
         form.addRow("Tras una verificación, ir más\ndespacio en esa cuenta durante", self.slowdown_hours)
+        # Varias cuentas a la vez: cada una con su propia cola y su navegador.
+        parallel_row = QHBoxLayout()
+        self.parallel_accounts = ToggleSwitch()
+        self.parallel_accounts.setAccessibleName("Publicar en varias cuentas a la vez")
+        self.parallel_accounts.toggled.connect(
+            lambda on: self.app.publish_queue.save_settings(parallel_accounts=bool(on))
+        )
+        parallel_row.addWidget(self.parallel_accounts)
+        parallel_label = QLabel(
+            "Cada cuenta publica sus anuncios en su propio navegador, al mismo tiempo que "
+            "las demás. Cada una respeta su ritmo y sus descansos; si una pide verificación, "
+            "las demás siguen. Apagado: de una en una, por turnos."
+        )
+        parallel_label.setWordWrap(True)
+        parallel_row.addWidget(parallel_label, 1)
+        form.addRow("Varias cuentas a la vez\n(opción de serie)", parallel_row)
+        self.max_parallel = pace_box(
+            "max_parallel_accounts", 1, 10, " cuentas",
+            tip="Como mucho, cuántas cuentas publican a la vez (cada una abre su navegador).",
+        )
+        form.addRow("Máximo de cuentas a la vez", self.max_parallel)
         self._pace_boxes = {
             "account_interval_seconds": self.account_interval,
             "batch_size": self.batch_size,
             "batch_rest_minutes": self.batch_rest,
             "slowdown_hours": self.slowdown_hours,
+            "max_parallel_accounts": self.max_parallel,
         }
         _fixed_height(
             self.integration_mode, self.publish_interval, self.publish_images, self.max_listings,
@@ -605,6 +627,9 @@ class SettingsView(BaseView):
             box.blockSignals(True)  # mostrar no es cambiar: no se guarda
             box.setValue(int(queue_settings[key]))
             box.blockSignals(False)
+        self.parallel_accounts.blockSignals(True)
+        self.parallel_accounts.setChecked(bool(queue_settings.get("parallel_accounts")))
+        self.parallel_accounts.blockSignals(False)
         used = len(self.app.publish_queue.used_photos())
         self.used_photos_label.setText(f"Fotos ya publicadas (no se repiten): {used}")
         from lot_bot.wallapop.browser.config import local_config_path

@@ -48,7 +48,10 @@ STATUS_COLORS = {
 
 class PublishQueueView(BaseView):
     title = "Publicación automática"
-    subtitle = "Los anuncios se publican de uno en uno, con un intervalo mínimo entre ellos"
+    subtitle = (
+        "Los anuncios se publican de uno en uno o, si lo eliges, en varias cuentas a la vez, "
+        "siempre con un intervalo mínimo"
+    )
 
     def build(self) -> None:
         self.add_header_button("Actualizar", self.refresh)
@@ -144,7 +147,14 @@ class PublishQueueView(BaseView):
             "paused": theme.WARNING, "completed": theme.SUCCESS, "cancelled": theme.TEXT_FAINT,
         }.get(progress.status, theme.ACCENT)
         self.ring.set_progress(progress.published, progress.total, ring_color)
-        if progress.status == "running" and progress.next_allowed_at:
+        if progress.status == "running" and progress.parallel:
+            active = progress.publishing_accounts
+            self.hero_text.setText(
+                f"A la vez, cada cuenta con su navegador: {', '.join(active)}."
+                if active
+                else "A la vez, cada cuenta con su navegador."
+            )
+        elif progress.status == "running" and progress.next_allowed_at:
             siguiente = f"Siguiente a las {progress.next_allowed_at:%H:%M}"
             if progress.current_account:
                 siguiente += f" en {progress.current_account}"
@@ -156,7 +166,9 @@ class PublishQueueView(BaseView):
         lines = [
             "Última publicación: "
             + (f"{progress.last_publish_at:%H:%M:%S}" if progress.last_publish_at else "—")
-            + f" · intervalo mínimo {progress.interval_seconds} s · "
+            + f" · intervalo mínimo {progress.interval_seconds} s"
+            + (" por cuenta (a la vez)" if progress.parallel else "")
+            + " · "
             f"{progress.in_progress} en curso · {progress.pending} pendientes · "
             f"{progress.failed} fallidos",
         ]

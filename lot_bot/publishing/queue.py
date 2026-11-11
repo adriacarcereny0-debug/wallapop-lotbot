@@ -101,6 +101,10 @@ DEFAULT_PUBLISH_SETTINGS: dict[str, Any] = {
     "batch_size": 10,  # 0 = sin descansos
     "batch_rest_minutes": 20,
     "slowdown_hours": 3,  # 0 = no ir más despacio tras una verificación
+    # Varias cuentas A LA VEZ: cada cuenta con su propia cola y su navegador
+    # (False = por turnos, de uno en uno, como siempre).
+    "parallel_accounts": False,
+    "max_parallel_accounts": 5,
 }
 #: Valores admitidos (mínimo, máximo) de los ajustes de ritmo.
 PACING_LIMITS: dict[str, tuple[int, int]] = {
@@ -108,6 +112,7 @@ PACING_LIMITS: dict[str, tuple[int, int]] = {
     "batch_size": (0, 500),
     "batch_rest_minutes": (0, 600),
     "slowdown_hours": (0, 48),
+    "max_parallel_accounts": (1, 10),
 }
 #: Tras una verificación, la cuenta espera este múltiplo de su intervalo.
 SLOWDOWN_FACTOR = 2
@@ -186,6 +191,20 @@ VERIFICATION_TASK_MESSAGE = (
 #: Seguridad: si fallan tantos anuncios SEGUIDOS, algo ha cambiado en la web
 #: y no tiene sentido seguir gastando intentos: se pausa y se avisa.
 MAX_CONSECUTIVE_FAILURES = 3
+#: Cola «a la vez»: separación mínima entre los ARRANQUES de publicaciones de
+#: cuentas distintas (no se abren todas en el mismo segundo).
+PARALLEL_START_GAP_S = 15
+#: Fotos que Wallapop ha rechazado (no se vuelven a elegir).
+REJECTED_PHOTOS_KEY = "fotos_rechazadas"
+#: Anuncios ya existentes por cuenta al empezar cada cola (para reconocer
+#: después, sin dudas, cuáles son nuevos).
+KNOWN_LISTINGS_KEY = "cola_{job}_conocidos"
+MISSING_PHOTOS_MESSAGE = (
+    "Faltan {n} foto(s) marcada(s) del Anuncio principal: {names}. Se borraron o se "
+    "movieron del ordenador, o están dañadas. NO se publica con menos fotos sin "
+    "avisarte: vuelve a añadirlas en «Anuncio principal» → «Fotografías…», o pulsa "
+    "«Continuar» para publicar esta cola con las {left} que quedan."
+)
 
 
 def validate_interval(seconds: Any) -> int:
@@ -253,6 +272,10 @@ class QueueProgress:
     pause_reason: str | None
     is_demo: bool
     tasks: list[dict[str, Any]] = field(default_factory=list)
+    #: Varias cuentas a la vez (cada una con su cola y su navegador).
+    parallel: bool = False
+    #: Cuentas publicando ahora mismo (colas «a la vez»).
+    publishing_accounts: list[str] = field(default_factory=list)
 
     @property
     def done(self) -> int:
@@ -283,6 +306,7 @@ class QueueProgress:
             else None,
             "motivo_pausa": self.pause_reason,
             "demo": self.is_demo,
+            "a_la_vez": self.parallel,
         }
 
 
@@ -323,6 +347,19 @@ class PublishQueue:
         self._account_streak: dict[str, int] = {}
         self._account_rest_until: dict[str, float] = {}
         self._account_slow_until: dict[str, float] = {}
+        #: Cola «a la vez»: un hilo por cuenta.
+        self._lanes: dict[str, threading.Thread] = {}
+        self._lanes_lock = threading.Lock()
+        self._last_parallel_start: float | None = None
+        #: Estado compartido entre hilos (fotos usadas, anuncios conocidos...).
+        self._state_lock = threading.RLock()
+        #: Fotos elegidas para un anuncio que aún se está publicando: ninguna
+        #: otra cuenta puede elegirlas a la vez. {foto: id del anuncio}.
+        self._reserved_photos: dict[str, int] = {}
+        #: Colas en las que la persona ya ha aceptado publicar con las fotos que quedan.
+        self._accepted_missing: set[int] = set()
+        self._missing_warned: dict[int, list[str]] = {}
+        self._photo_warned: set[tuple[int, str]] = set()
 
     # ------------------------------------------------------------------
     # Configuración
@@ -401,8 +438,12 @@ class PublishQueue:
         generate_images: bool | None = None,
         actor: str = "usuario",
         start: bool = True,
+        parallel: bool | None = None,
     ) -> int:
-        """Crea una cola con copias del anuncio principal. Devuelve su id."""
+        """Crea una cola con copias del anuncio principal. Devuelve su id.
+
+        `parallel`: publicar en las cuentas A LA VEZ (cada una con su propia
+        cola y su navegador). None = lo que diga la configuración."""
         master = self._app.master_ads.get(key)
         if master is None:
             raise ValueError("No existe el anuncio principal.")
@@ -422,7 +463,12 @@ class PublishQueue:
         settings = self.settings()
         if generate_images is None:
             generate_images = bool(settings["generate_images"])
-        title = self._app.master_ads.render(master, overrides)["title"]
+        rendered = self._app.master_ads.render(master, overrides)
+        title = rendered["title"]
+        if parallel is None:
+            parallel = bool(settings.get("parallel_accounts"))
+        # Con una sola cuenta no hay nada que hacer a la vez.
+        parallel = bool(parallel) and len(set(refs)) > 1
         with self._db.session_scope() as session:
             job = PublishJob(
                 name=f"{len(refs)} × {master.name}",
@@ -430,6 +476,7 @@ class PublishQueue:
                 interval_seconds=settings["minimum_publish_interval_seconds"],
                 generate_images=generate_images,
                 is_demo=bool(self._app.demo_mode),
+                parallel=parallel,
                 actor=actor,
             )
             session.add(job)
@@ -441,7 +488,13 @@ class PublishQueue:
                         position=position,
                         account_ref=ref,
                         title=title[:200],
-                        payload={"master_key": master.key, "overrides": dict(overrides or {})},
+                        payload={
+                            "master_key": master.key,
+                            "overrides": dict(overrides or {}),
+                            # Lo que se espera ver en Wallapop (para reconocerlo
+                            # si no confirma): título y precio.
+                            "precio": rendered.get("price"),
+                        },
                     )
                 )
             job_id = job.id
@@ -450,7 +503,8 @@ class PublishQueue:
             target=master.name,
             detail=f"{len(refs)} anuncio(s), intervalo mínimo "
             f"{settings['minimum_publish_interval_seconds']} s"
-            + (", una imagen generada por anuncio" if generate_images else ""),
+            + (", una imagen generada por anuncio" if generate_images else "")
+            + (", varias cuentas a la vez" if parallel else ""),
             actor=actor,
         )
         if start:
@@ -484,6 +538,14 @@ class PublishQueue:
 
     def resume(self, job_id: int) -> None:
         self._consecutive_failures = 0
+        if job_id in self._missing_warned:
+            # «Continuar» tras el aviso de fotos que faltan: se publica con las que quedan.
+            self._accepted_missing.add(job_id)
+            self._audit.record_success(
+                "Publicar con las fotos que quedan (aceptado)",
+                detail=f"Cola {job_id}: faltan " + ", ".join(self._missing_warned[job_id]),
+                actor="usuario",
+            )
         self._set_job(job_id, PublishJobStatus.RUNNING)
         self._audit.record_success("Cola de publicación reanudada", detail=f"Cola {job_id}")
         self._wake.set()
@@ -648,6 +710,13 @@ class PublishQueue:
                 next_allowed_at=next_allowed,
                 pause_reason=job.pause_reason,
                 is_demo=job.is_demo,
+                parallel=bool(job.parallel),
+                publishing_accounts=sorted({
+                    aliases.get(t.account_ref, t.account_ref)
+                    for t in tasks
+                    if t.status in (PublishTaskStatus.WAITING, PublishTaskStatus.PUBLISHING,
+                                    PublishTaskStatus.GENERATING)
+                }),
                 tasks=[
                     {
                         "id": t.id,
@@ -718,6 +787,7 @@ class PublishQueue:
         self._wake.set()
         if self._thread:
             self._thread.join(timeout)
+        self.wait_for_lanes(timeout)
 
     def _loop(self) -> None:  # pragma: no cover - hilo real
         while not self._stop.is_set():
@@ -760,14 +830,19 @@ class PublishQueue:
         return steps
 
     def run_once(self) -> bool:
-        """Procesa el siguiente anuncio de la cola activa. False si no hay nada."""
+        """Procesa el siguiente anuncio de la cola activa. False si no hay nada.
+
+        En una cola «a la vez» (`parallel`) no publica él mismo: arranca un
+        hilo por cuenta (cada uno con su propia cola de anuncios y su propio
+        navegador) y da la cola por terminada cuando todos han acabado."""
         with self._lock:
             job_id = self._active_job()
             if job_id is None:
                 return False
             self._check_clock()
+            if self._job_is_parallel(job_id):
+                return self._coordinate_parallel(job_id)
             with self._db.session_scope() as session:
-                job = session.get(PublishJob, job_id)
                 pending = session.scalars(
                     select(PublishTask)
                     .where(
@@ -788,148 +863,351 @@ class PublishQueue:
                 waiting = sorted({t.account_ref for t in pending}) if pending and task is None else []
                 only_verifying = bool(waiting) and all(r in verifying for r in waiting)
                 blocked = [] if only_verifying else [r for r in waiting if r not in verifying]
-                if only_verifying:
-                    job_done = False
-                elif blocked:
-                    job_done = False
-                elif task is None:
-                    job_done = True
-                else:
-                    job_done = False
-                    task_id, ref, attempts = task.id, task.account_ref, task.attempts
-                    payload = dict(task.payload or {})
-                    image_path = task.image_path
-                    generate = job.generate_images
-                    interval = job.interval_seconds
-                    actor = job.actor
-                    position = task.position
+                job_done = not only_verifying and not blocked and task is None
+                task_id = task.id if task is not None else None
             if only_verifying:
                 # Solo quedan anuncios de cuentas con verificación: se mira si
                 # la persona ya la ha completado (la cola sigue «en marcha»).
                 self._poll_verifications(force=True)
                 return False
             if blocked:
-                aliases = {a.internal_ref: a.alias for a in self._app.accounts.list_accounts()}
-                names = ", ".join(aliases.get(r, r) for r in blocked)
-                self.pause(
-                    job_id,
-                    f"Estas cuentas no están conectadas en LOT Bot: {names}. Conéctalas en "
-                    "Cuentas; al comprobarse la sesión la cola continúa sola.",
-                )
+                self._pause_blocked(job_id, blocked)
                 return True
             if job_done:
-                # Los que Wallapop no confirmó se buscan ahora en «Tus
-                # productos» (una lectura por cuenta, al final de la cola).
-                self._confirm_unconfirmed(job_id)
-                self._set_job(job_id, PublishJobStatus.COMPLETED)
-                self._audit.record_success(
-                    "Cola de publicación terminada", detail=self.progress(job_id).name
-                )
+                self._finish_job(job_id)
+                return True
+            return self._process_task(job_id, task_id, parallel=False)
+
+    def _pause_blocked(self, job_id: int, blocked: list[str]) -> None:
+        aliases = {a.internal_ref: a.alias for a in self._app.accounts.list_accounts()}
+        names = ", ".join(aliases.get(r, r) for r in blocked)
+        self.pause(
+            job_id,
+            f"Estas cuentas no están conectadas en LOT Bot: {names}. Conéctalas en "
+            "Cuentas; al comprobarse la sesión la cola continúa sola.",
+        )
+
+    def _finish_job(self, job_id: int) -> None:
+        # Los que Wallapop no confirmó se buscan ahora en «Tus productos» (una
+        # lectura por cuenta, al final de la cola).
+        self._confirm_unconfirmed(job_id)
+        self._set_job(job_id, PublishJobStatus.COMPLETED)
+        self._forget_job_state(job_id)
+        self._audit.record_success(
+            "Cola de publicación terminada", detail=self.progress(job_id).name
+        )
+
+    def _process_task(self, job_id: int, task_id: int, *, parallel: bool) -> bool:
+        """Publica UN anuncio: esperar su turno → foto → publicar → resultado.
+
+        `parallel`: lo llama el hilo de su cuenta (cola «a la vez»). Entonces
+        solo cuenta el ritmo de ESA cuenta (más una separación corta entre
+        arranques de cuentas distintas); si no, el intervalo entre cualquier
+        par de anuncios, como siempre."""
+        with self._db.session_scope() as session:
+            job = session.get(PublishJob, job_id)
+            task = session.get(PublishTask, task_id)
+            if task is None or task.status is not PublishTaskStatus.PENDING:
+                return True
+            ref, attempts = task.account_ref, task.attempts
+            payload = dict(task.payload or {})
+            image_path = task.image_path
+            generate = job.generate_images
+            interval = job.interval_seconds
+            actor = job.actor
+            position = task.position
+
+        def ready_ts() -> float:
+            if parallel:
+                return self._lane_ready_ts(ref, interval, attempts)
+            return self._ready_ts(ref, interval, attempts)
+
+        # 1. Imagen única para este anuncio.
+        if generate and not image_path:
+            self._set_task(task_id, status=PublishTaskStatus.GENERATING)
+            image_path = self._generate_image(task_id, job_id, position, ref, payload)
+            if image_path is None:
                 return True
 
-            # 1. Imagen única para este anuncio.
-            if generate and not image_path:
-                self._set_task(task_id, status=PublishTaskStatus.GENERATING)
-                image_path = self._generate_image(task_id, job_id, position, ref, payload)
-                if image_path is None:
-                    return True
-
-            # 2. Esperar el intervalo mínimo (desde cualquier publicación anterior).
-            #    Mientras tanto se hace sitio (si la cuenta está al máximo).
-            self._set_task(task_id, status=PublishTaskStatus.WAITING)
-            service = getattr(self._app, "wallapop", None)
-            if service is not None and hasattr(service, "user_gate"):
-                service.user_gate = self._user_gate
-            self._current_job = job_id
-            self._make_room(job_id, ref)
-            wait = self._ready_ts(ref, interval, attempts) - self.clock.now()
-            while wait > 0:
-                self._poll_verifications()
-                self.clock.sleep(min(wait, 1.0), self._stop)
-                if self._stop.is_set():
+        # 2. Esperar el intervalo mínimo. Mientras tanto se hace sitio (si la
+        #    cuenta está al máximo).
+        self._set_task(task_id, status=PublishTaskStatus.WAITING)
+        service = getattr(self._app, "wallapop", None)
+        if service is not None and hasattr(service, "user_gate"):
+            service.user_gate = self._user_gate
+        self._current_job = job_id
+        self._make_room(job_id, ref)
+        while True:
+            wait = ready_ts() - self.clock.now()
+            if wait <= 0 and parallel and not self._take_parallel_start():
+                wait = 1.0  # otra cuenta acaba de empezar: separación corta
+            if wait <= 0:
+                break
+            self._poll_verifications()
+            self.clock.sleep(min(wait, 1.0), self._stop)
+            if self._stop.is_set():
+                self._set_task(task_id, status=PublishTaskStatus.PENDING)
+                return False
+            status = self._job_status(job_id)
+            if status is not PublishJobStatus.RUNNING:
+                if status is PublishJobStatus.PAUSED:
                     self._set_task(task_id, status=PublishTaskStatus.PENDING)
-                    return False
-                if self._job_status(job_id) is not PublishJobStatus.RUNNING:
-                    status = self._job_status(job_id)
-                    if status is PublishJobStatus.PAUSED:
-                        self._set_task(task_id, status=PublishTaskStatus.PENDING)
-                    return True
-                wait = self._ready_ts(ref, interval, attempts) - self.clock.now()
-
-            # 3. Publicar.
-            self._set_task(
-                task_id,
-                status=PublishTaskStatus.PUBLISHING,
-                started_at=datetime.fromtimestamp(self.clock.now()),
-                attempts=attempts + 1,
-            )
-            self._last_attempt = self.clock.now()
-            self._account_attempted(ref)
-            self._current_job = job_id
-            service = getattr(self._app, "wallapop", None)
-            if service is not None and hasattr(service, "user_gate"):
-                service.user_gate = self._user_gate
-            only_images = None
-            photo_key = None
-            if (
-                not image_path
-                and self.settings().get("rotate_photos")
-                and self._has_own_photos(payload.get("master_key"))
-            ):
-                photo = self._next_rotating_photo(payload.get("master_key"))
-                if photo is None:
-                    # No quedan fotos sin publicar: se para y se avisa.
-                    self._set_task(task_id, status=PublishTaskStatus.PENDING, attempts=attempts)
-                    self.pause(job_id, NO_PHOTOS_MESSAGE)
-                    return True
-                only_images = [photo["path"]]
-                photo_key = self.photo_key(photo)
-            try:
-                outcome = self._app.master_ads.publish_single(
-                    payload.get("master_key"),
-                    ref,
-                    payload.get("overrides") or {},
-                    extra_images=[image_path] if image_path else None,
-                    only_images=only_images,
-                    meta={"imagen": payload.get("imagen") or {"origen": "plantilla"}},
-                    confirmed=True,
-                    actor=actor,
-                )
-            except Exception as exc:  # errores de configuración, capacidad...
-                code = type(exc).__name__
-                message = getattr(exc, "user_message", None) or str(exc)
-                if code == DEFERRED_CODE:
-                    self._defer_task(task_id, attempts)
-                    return True
-                self._fail(task_id, job_id, attempts + 1, code, message)
+                elif status is PublishJobStatus.CANCELLED:
+                    self._set_task(task_id, status=PublishTaskStatus.CANCELLED)
                 return True
 
-            if not outcome.success and outcome.error_code == DEFERRED_CODE:
+        # 3. Fotos: comprobar que están todas (y que no están dañadas).
+        only_images = None
+        photo_key = None
+        master_key = payload.get("master_key")
+        if (
+            not image_path
+            and self.settings().get("rotate_photos")
+            and self._has_own_photos(master_key)
+        ):
+            photo = self._reserve_photo(master_key, task_id, job_id)
+            if photo is None:
+                # No quedan fotos sin publicar: se para y se avisa.
+                self._set_task(task_id, status=PublishTaskStatus.PENDING, attempts=attempts)
+                self.pause(job_id, NO_PHOTOS_MESSAGE)
+                return True
+            only_images = [photo["path"]]
+            photo_key = self.photo_key(photo)
+        elif not image_path and not self._photos_ok_to_publish(job_id, master_key):
+            # Falta alguna foto marcada: NUNCA se publica con menos sin avisar.
+            self._set_task(task_id, status=PublishTaskStatus.PENDING, attempts=attempts)
+            return True
+
+        # 4. Publicar.
+        self._set_task(
+            task_id,
+            status=PublishTaskStatus.PUBLISHING,
+            started_at=datetime.fromtimestamp(self.clock.now()),
+            attempts=attempts + 1,
+        )
+        self._last_attempt = self.clock.now()
+        self._account_attempted(ref)
+        self._current_job = job_id
+        self._remember_known_listings(job_id, ref)
+        try:
+            outcome = self._app.master_ads.publish_single(
+                master_key,
+                ref,
+                payload.get("overrides") or {},
+                extra_images=[image_path] if image_path else None,
+                only_images=only_images,
+                meta={"imagen": payload.get("imagen") or {"origen": "plantilla"}},
+                confirmed=True,
+                actor=actor,
+            )
+        except Exception as exc:  # errores de configuración, capacidad...
+            self._release_photo(photo_key)
+            code = type(exc).__name__
+            message = getattr(exc, "user_message", None) or str(exc)
+            if code == DEFERRED_CODE:
                 self._defer_task(task_id, attempts)
                 return True
-            if outcome.success:
-                self._consecutive_failures = 0
-                if photo_key:
-                    self.mark_photo_used(photo_key, ref)
-                self._set_task(
-                    task_id,
-                    status=PublishTaskStatus.PUBLISHED,
-                    published_at=datetime.fromtimestamp(self.clock.now()),
-                    remote_id=outcome.item_id,
-                    remote_url=outcome.url,
-                    error=None,
-                    error_code=None,
-                )
-            elif outcome.error_code == UNCONFIRMED_CODE and self._unconfirmed_found_now(
-                task_id, job_id, ref, outcome.message, photo_key
-            ):
-                # Wallapop no lo confirmó en pantalla, pero está en «Tus productos».
-                self._consecutive_failures = 0
-            else:
-                self._fail(
-                    task_id, job_id, attempts + 1, outcome.error_code or "ERROR", outcome.message
-                )
+            if self._photo_rejected(task_id, job_id, code, photo_key, attempts, message):
+                return True
+            self._fail(task_id, job_id, attempts + 1, code, message)
             return True
+
+        if not outcome.success and outcome.error_code == DEFERRED_CODE:
+            self._release_photo(photo_key)
+            self._defer_task(task_id, attempts)
+            return True
+        if outcome.success:
+            self._reset_failures()
+            if photo_key:
+                self.mark_photo_used(photo_key, ref)
+            self._set_task(
+                task_id,
+                status=PublishTaskStatus.PUBLISHED,
+                published_at=datetime.fromtimestamp(self.clock.now()),
+                remote_id=outcome.item_id,
+                remote_url=outcome.url,
+                error=None,
+                error_code=None,
+            )
+        elif outcome.error_code == UNCONFIRMED_CODE and self._unconfirmed_found_now(
+            task_id, job_id, ref, outcome.message, photo_key
+        ):
+            # Wallapop no lo confirmó en pantalla, pero está en «Tus productos».
+            self._reset_failures()
+        elif outcome.error_code == UNCONFIRMED_CODE:
+            self._release_photo(photo_key, used=True)  # ya marcada: pudo publicarse
+            self._fail(task_id, job_id, attempts + 1, UNCONFIRMED_CODE, outcome.message)
+        else:
+            self._release_photo(photo_key)
+            code = outcome.error_code or "ERROR"
+            if self._photo_rejected(task_id, job_id, code, photo_key, attempts, outcome.message):
+                return True
+            self._fail(task_id, job_id, attempts + 1, code, outcome.message)
+        return True
+
+    # ------------------------------------------------------------------
+    # Varias cuentas a la vez (una cola y un navegador por cuenta)
+    # ------------------------------------------------------------------
+    def _job_is_parallel(self, job_id: int) -> bool:
+        with self._db.session_scope() as session:
+            job = session.get(PublishJob, job_id)
+            return bool(job and job.parallel)
+
+    def _coordinate_parallel(self, job_id: int) -> bool:
+        """Arranca (o deja seguir) un hilo por cuenta con anuncios pendientes.
+
+        Cada hilo publica SOLO los anuncios de su cuenta, en orden, con su
+        propio navegador y respetando el ritmo de esa cuenta. Nunca hay dos
+        hilos de la misma cuenta. Como mucho `max_parallel_accounts` a la vez."""
+        with self._lanes_lock:
+            alive = {r for r, t in self._lanes.items() if t.is_alive()}
+            self._lanes = {r: t for r, t in self._lanes.items() if r in alive}
+        with self._db.session_scope() as session:
+            rows = session.execute(
+                select(PublishTask.account_ref, PublishTask.status)
+                .where(PublishTask.job_id == job_id)
+                .order_by(PublishTask.position)
+            ).all()
+        pending: list[str] = []
+        busy = False
+        for ref, status in rows:
+            if status is PublishTaskStatus.PENDING and ref not in pending:
+                pending.append(ref)
+            if status in (
+                PublishTaskStatus.GENERATING, PublishTaskStatus.WAITING, PublishTaskStatus.PUBLISHING
+            ):
+                busy = True
+        if busy and not alive:
+            # Ningún hilo trabaja ya, pero quedan anuncios «en curso» (un fallo
+            # inesperado): se dejan como tras un cierre (nada se duplica).
+            self._recover_stale_tasks(job_id)
+            return True
+        if not pending and not busy and not alive:
+            self._finish_job(job_id)
+            return True
+        usable = [r for r in pending if self._account_usable(r)]
+        blocked = [r for r in pending if r not in usable]
+        if blocked and not usable and not alive and not busy:
+            self._pause_blocked(job_id, blocked)
+            return True
+        slots = int(self.settings()["max_parallel_accounts"]) - len(alive)
+        started = False
+        for ref in usable:
+            if slots <= 0:
+                break
+            if ref in alive:
+                continue
+            self._start_lane(job_id, ref)
+            slots -= 1
+            started = True
+        return started
+
+    def _recover_stale_tasks(self, job_id: int) -> None:
+        with self._db.session_scope() as session:
+            for task in session.scalars(
+                select(PublishTask).where(
+                    PublishTask.job_id == job_id,
+                    PublishTask.status.in_([
+                        PublishTaskStatus.GENERATING,
+                        PublishTaskStatus.WAITING,
+                        PublishTaskStatus.PUBLISHING,
+                    ]),
+                )
+            ).all():
+                if task.status is PublishTaskStatus.PUBLISHING:
+                    task.status = PublishTaskStatus.UNCONFIRMED
+                    task.error = INTERRUPTED_MESSAGE
+                    task.error_code = UNCONFIRMED_CODE
+                else:
+                    task.status = PublishTaskStatus.PENDING
+        self._notify(job_id)
+
+    def _start_lane(self, job_id: int, ref: str) -> None:
+        thread = threading.Thread(
+            target=self._lane, args=(job_id, ref), name=f"lotbot-cola-{ref}", daemon=True
+        )
+        with self._lanes_lock:
+            self._lanes[ref] = thread
+        thread.start()
+
+    def _lane(self, job_id: int, ref: str) -> None:
+        """Hilo de UNA cuenta: publica sus anuncios uno tras otro."""
+        try:
+            while not self._stop.is_set():
+                if self._job_status(job_id) is not PublishJobStatus.RUNNING:
+                    return
+                if not self._account_usable(ref):
+                    return
+                with self._db.session_scope() as session:
+                    task_id = session.scalar(
+                        select(PublishTask.id)
+                        .where(
+                            PublishTask.job_id == job_id,
+                            PublishTask.account_ref == ref,
+                            PublishTask.status == PublishTaskStatus.PENDING,
+                        )
+                        .order_by(PublishTask.position)
+                        .limit(1)
+                    )
+                if task_id is None:
+                    return
+                if not self._process_task(job_id, task_id, parallel=True):
+                    return
+        except Exception:  # pragma: no cover - un fallo raro no tumba las demás cuentas
+            logger.exception("Error inesperado publicando en %s", ref)
+        finally:
+            self._wake.set()  # el coordinador mira si la cola ha terminado
+
+    def wait_for_lanes(self, timeout: float = 30.0) -> None:
+        """Espera a que acaben los hilos de las cuentas (pruebas y cierre)."""
+        deadline = time.monotonic() + timeout
+        while True:
+            with self._lanes_lock:
+                threads = [t for t in self._lanes.values() if t.is_alive()]
+            if not threads or time.monotonic() > deadline:
+                return
+            for thread in threads:
+                thread.join(max(0.0, min(1.0, deadline - time.monotonic())))
+
+    def run_parallel_until_idle(self, max_rounds: int = 200) -> None:
+        """Como `run_until_idle`, para colas «a la vez» (pruebas)."""
+        for _ in range(max_rounds):
+            worked = self.run_once()
+            self.wait_for_lanes()
+            if not worked and not self._lanes_alive():
+                if self._active_job() is None or not self.run_once():
+                    return
+
+    def _lanes_alive(self) -> bool:
+        with self._lanes_lock:
+            return any(t.is_alive() for t in self._lanes.values())
+
+    def _lane_ready_ts(self, ref: str, interval: int | None, attempts: int) -> float:
+        """Cuándo puede publicar esta cuenta en una cola «a la vez»: su ritmo
+        y, como mínimo, el intervalo de la cola desde SU último anuncio."""
+        ready = self.account_ready_ts(ref)
+        last = self._account_last_ts(ref)
+        if last is not None:
+            gap = max(interval or self.interval, MINIMUM_PUBLISH_INTERVAL_SECONDS)
+            if attempts > 0:
+                gap *= 2 ** min(attempts, 3)
+            ready = max(ready, last + gap)
+        return ready
+
+    def _take_parallel_start(self) -> bool:
+        """Separación corta entre los ARRANQUES de cuentas distintas (para no
+        abrir todas las publicaciones en el mismo segundo)."""
+        with self._lanes_lock:
+            now = self.clock.now()
+            last = self._last_parallel_start
+            if last is not None and now - last < PARALLEL_START_GAP_S:
+                return False
+            self._last_parallel_start = now
+            return True
+
+    def _reset_failures(self) -> None:
+        with self._lanes_lock:
+            self._consecutive_failures = 0
 
     #: Espera entre borrados para hacer sitio (no son publicaciones).
     ROOM_DELETE_WAIT_S = 8.0
@@ -1035,11 +1313,15 @@ class PublishQueue:
         return seen
 
     def _confirm_unconfirmed(self, job_id: int, account_ref: str | None = None) -> int:
-        """Al terminar la cola: los anuncios que Wallapop no confirmó en
-        pantalla se buscan en «Tus productos» (UNA lectura por cuenta). Si
-        Wallapop tiene más con ese título de los que conoce LOT Bot, se
-        publicaron. Devuelve cuántos se han confirmado así."""
-        from lot_bot.publishing.listings import ListingFilter, _norm_text
+        """Los anuncios que Wallapop no confirmó en pantalla se buscan en «Tus
+        productos» (UNA lectura por cuenta). Devuelve cuántos se han confirmado.
+
+        Un anuncio NO se reconoce solo por el título. En «Tus productos» se
+        cuentan los anuncios NUEVOS (que no estaban en esa cuenta al empezar
+        la cola ni son de otro anuncio ya publicado) con el MISMO título y el
+        MISMO precio. Solo si salen exactamente los que faltan se dan por
+        publicados (con su dirección). Si salen menos, más o sin precio, hay
+        dudas: se quedan «sin confirmar» y se pide comprobarlo a mano."""
         from lot_bot.wallapop.capabilities import Capability
 
         service = getattr(self._app, "wallapop", None)
@@ -1047,13 +1329,16 @@ class PublishQueue:
         if service is None or listings is None:
             return 0
         with self._db.session_scope() as session:
-            query = select(PublishTask.id, PublishTask.account_ref, PublishTask.title).where(
+            query = select(PublishTask).where(
                 PublishTask.job_id == job_id,
                 PublishTask.status == PublishTaskStatus.UNCONFIRMED,
             )
             if account_ref is not None:
                 query = query.where(PublishTask.account_ref == account_ref)
-            rows = session.execute(query.order_by(PublishTask.position)).all()
+            rows = [
+                (t.id, t.account_ref, t.title or "", (t.payload or {}).get("precio"))
+                for t in session.scalars(query.order_by(PublishTask.position)).all()
+            ]
         if not rows:
             return 0
         try:
@@ -1061,34 +1346,52 @@ class PublishQueue:
                 return 0
         except Exception:
             return 0
-        by_account: dict[str, list[tuple[int, str]]] = {}
-        for task_id, ref, title in rows:
-            by_account.setdefault(ref, []).append((task_id, _norm_text(title or "")))
+        by_account: dict[str, list[tuple[int, str, Any]]] = {}
+        for task_id, ref, title, price in rows:
+            by_account.setdefault(ref, []).append((task_id, title, price))
         confirmed = 0
         for ref, tasks in by_account.items():
             try:
-                remote = [
-                    _norm_text(item.raw.get("texto") or item.title)
-                    for item in service.list_items(ref, limit=500)
-                ]
-                local = [
-                    _norm_text(v.title)
-                    for v in listings.search(ListingFilter(account_ref=ref, limit=5000))
-                    if v.status != "removed"
-                ]
+                remote = service.list_items(ref, limit=500)
             except Exception as exc:  # comprobar nunca rompe la cola
                 logger.warning("No se ha podido comprobar en «Tus productos»: %s", exc)
                 continue
-            found: list[int] = []
-            for wanted in {title for _, title in tasks if title}:
-                extra = sum(1 for t in remote if wanted in t) - sum(1 for t in local if t == wanted)
-                group = [task_id for task_id, title in tasks if title == wanted]
-                found.extend(group[: max(0, extra)])
-            for task_id in found:
+            known = self._known_listing_ids(job_id, ref)
+            fresh = [item for item in remote if str(item.item_id) not in known]
+            groups: dict[tuple[str, Any], list[int]] = {}
+            for task_id, title, price in tasks:
+                groups.setdefault((title, price), []).append(task_id)
+            found: list[tuple[int, Any]] = []
+            for (title, price), group in groups.items():
+                matches, doubtful = _classify_items(fresh, title, price)
+                # Anuncios de esta cola ya publicados con el mismo título y
+                # precio pero sin dirección conocida: también están entre los nuevos.
+                hidden = self._published_without_id(job_id, ref, title)
+                expected = len(group) + hidden
+                if price is not None and not doubtful and len(matches) == expected:
+                    # Lo esperado, exactamente: se publicaron. «Tus productos»
+                    # va del más nuevo al más antiguo; la cola, al revés.
+                    ordered = list(reversed(matches))
+                    for index, task_id in enumerate(group):
+                        found.append((task_id, ordered[index] if not hidden else None))
+                    continue
+                reason = _doubt_reason(len(matches), expected, doubtful, price)
+                for task_id in group:
+                    self._set_task(task_id, error=reason[:1000], error_code=UNCONFIRMED_CODE)
+                self._audit.record_error(
+                    "Anuncio sin confirmar: hay que revisarlo a mano",
+                    error=reason,
+                    account_ref=ref,
+                    target=title,
+                )
+            for task_id, item in found:
+                url = (getattr(item, "raw", None) or {}).get("url") if item is not None else None
                 self._set_task(
                     task_id,
                     status=PublishTaskStatus.PUBLISHED,
                     published_at=datetime.fromtimestamp(self.clock.now()),
+                    remote_id=str(item.item_id) if item is not None else None,
+                    remote_url=url,
                     error=None,
                     error_code=None,
                 )
@@ -1101,9 +1404,91 @@ class PublishQueue:
         if confirmed:
             self._audit.record_success(
                 "Anuncios sin confirmar encontrados en «Tus productos»",
-                detail=f"Cola {job_id}: {confirmed} publicado(s)",
+                detail=f"Cola {job_id}: {confirmed} publicado(s) (mismo título y precio, anuncio nuevo)",
             )
         return confirmed
+
+    def _known_listing_ids(self, job_id: int, ref: str) -> set[str]:
+        """Anuncios que NO pueden ser el que se busca: los que ya tenía la
+        cuenta al empezar la cola y los de otros anuncios ya publicados."""
+        with self._db.session_scope() as session:
+            row = session.get(Setting, KNOWN_LISTINGS_KEY.format(job=job_id))
+            known = set(((row.value or {}) if row else {}).get(ref) or [])
+            taken = session.scalars(
+                select(PublishTask.remote_id).where(
+                    PublishTask.account_ref == ref,
+                    PublishTask.status == PublishTaskStatus.PUBLISHED,
+                    PublishTask.remote_id.is_not(None),
+                )
+            ).all()
+        if row is None or ref not in (row.value or {}):
+            # Cola antigua (sin foto de lo que había): se usa lo que LOT Bot conoce.
+            known |= self._local_listing_ids(ref)
+        return known | {str(t) for t in taken}
+
+    def _local_listing_ids(self, ref: str) -> set[str]:
+        from lot_bot.publishing.listings import ListingFilter
+
+        listings = getattr(self._app, "listings", None)
+        if listings is None:
+            return set()
+        return {
+            str(v.wallapop_item_id)
+            for v in listings.search(ListingFilter(account_ref=ref, limit=5000))
+            if v.wallapop_item_id
+        }
+
+    def _remember_known_listings(self, job_id: int, ref: str) -> None:
+        """Antes del PRIMER anuncio de una cuenta en esta cola se apunta qué
+        anuncios tenía ya (lo que conoce LOT Bot). Así, si luego Wallapop no
+        confirma uno, se sabe cuáles de «Tus productos» son nuevos."""
+        key = KNOWN_LISTINGS_KEY.format(job=job_id)
+        with self._state_lock:
+            with self._db.session_scope() as session:
+                row = session.get(Setting, key)
+                if row is not None and ref in (row.value or {}):
+                    return
+            try:
+                ids = sorted(self._local_listing_ids(ref))
+            except Exception:
+                logger.debug("No se han podido leer los anuncios de %s", ref, exc_info=True)
+                return
+            with self._db.session_scope() as session:
+                row = session.get(Setting, key)
+                if row is None:
+                    session.add(Setting(key=key, value={ref: ids}))
+                else:
+                    row.value = {**(row.value or {}), ref: ids}
+
+    def _published_without_id(self, job_id: int, ref: str, title: str) -> int:
+        """Anuncios de esta cola publicados (y confirmados) sin dirección real."""
+        with self._db.session_scope() as session:
+            ids = session.scalars(
+                select(PublishTask.remote_id).where(
+                    PublishTask.job_id == job_id,
+                    PublishTask.account_ref == ref,
+                    PublishTask.title == title,
+                    PublishTask.status == PublishTaskStatus.PUBLISHED,
+                )
+            ).all()
+        return sum(1 for i in ids if not i or str(i).startswith("navegador-"))
+
+    def _forget_job_state(self, job_id: int) -> None:
+        """Al terminar la cola se borra lo que solo servía mientras estaba en marcha."""
+        self._accepted_missing.discard(job_id)
+        self._missing_warned.pop(job_id, None)
+        with self._db.session_scope() as session:
+            row = session.get(Setting, KNOWN_LISTINGS_KEY.format(job=job_id))
+            if row is not None:
+                # Si queda alguno sin confirmar, se conserva para volver a mirarlo.
+                pending = session.scalar(
+                    select(func.count(PublishTask.id)).where(
+                        PublishTask.job_id == job_id,
+                        PublishTask.status == PublishTaskStatus.UNCONFIRMED,
+                    )
+                )
+                if not pending:
+                    session.delete(row)
 
     # ------------------------------------------------------------------
     # Ritmo por cuenta
@@ -1278,35 +1663,104 @@ class PublishQueue:
                 row.value = used
 
     def mark_photo_used(self, key: str, account_ref: str) -> None:
-        used = self.used_photos()
-        entry = dict(used.get(key) or {"cuentas": []})
-        entry["cuentas"] = sorted({*entry.get("cuentas", []), account_ref})
-        entry["fecha"] = datetime.fromtimestamp(self.clock.now()).isoformat(timespec="seconds")
-        used[key] = entry
-        self._save_used(used)
+        with self._state_lock:
+            used = self.used_photos()
+            entry = dict(used.get(key) or {"cuentas": []})
+            entry["cuentas"] = sorted({*entry.get("cuentas", []), account_ref})
+            entry["fecha"] = datetime.fromtimestamp(self.clock.now()).isoformat(timespec="seconds")
+            used[key] = entry
+            self._save_used(used)
+            self._reserved_photos.pop(key, None)
 
     def reset_used_photos(self) -> None:
-        """Permite volver a usar todas las fotos (lo decide el usuario)."""
-        self._save_used({})
+        """Permite volver a usar todas las fotos (lo decide el usuario).
+        También las que Wallapop rechazó: se volverán a probar."""
+        with self._state_lock:
+            self._save_used({})
+            self._save_setting(REJECTED_PHOTOS_KEY, {})
         self._audit.record_success("Fotos publicadas reiniciadas", actor="usuario")
 
+    # --- Fotos que faltan o están dañadas -----------------------------
+    _photo_checks: dict[tuple[str, float, int], str | None] = {}
+
+    @classmethod
+    def photo_problem(cls, path: str | None) -> str | None:
+        """None si la foto se puede subir; si no, por qué («no está en el
+        ordenador», «está dañada»). El resultado se recuerda mientras el
+        fichero no cambie."""
+        if not path:
+            return "no tiene ruta"
+        file = Path(path)
+        try:
+            stat = file.stat()
+        except OSError:
+            return "no está en el ordenador (se borró o se movió)"
+        if not file.is_file():
+            return "no está en el ordenador (se borró o se movió)"
+        key = (str(file), stat.st_mtime, stat.st_size)
+        if key not in cls._photo_checks:
+            problem = None
+            try:
+                from PIL import Image
+
+                with Image.open(file) as img:
+                    img.verify()
+            except Exception:
+                problem = "está dañada o no es una imagen"
+            cls._photo_checks[key] = problem
+        return cls._photo_checks[key]
+
+    def rejected_photos(self) -> dict[str, dict[str, Any]]:
+        with self._db.session_scope() as session:
+            row = session.get(Setting, REJECTED_PHOTOS_KEY)
+            return dict((row.value or {}) if row else {})
+
+    def _save_setting(self, key: str, value: Any) -> None:
+        with self._db.session_scope() as session:
+            row = session.get(Setting, key)
+            if row is None:
+                session.add(Setting(key=key, value=value))
+            else:
+                row.value = value
+
+    def missing_photos(self, master_key: str | None) -> list[dict[str, str]]:
+        """Fotos MARCADAS del anuncio principal que no se pueden subir
+        (borradas, movidas o dañadas): [{"nombre", "ruta", "motivo"}]."""
+        master = self._app.master_ads.get(master_key)
+        if master is None:
+            return []
+        problems = []
+        for image in self._app.master_ads.effective_images(master):
+            if image.get("source") == "demo":
+                continue
+            problem = self.photo_problem(image.get("path"))
+            if problem:
+                path = str(image.get("path") or "")
+                problems.append({"nombre": Path(path).name or "(sin nombre)", "ruta": path,
+                                 "motivo": problem})
+        return problems
+
     def unused_photos(self, master_key: str | None) -> list[dict[str, Any]]:
-        """Fotos marcadas del anuncio principal que aún no se han publicado."""
+        """Fotos marcadas del anuncio principal que aún no se han publicado
+        (y que se pueden subir: existen, no están dañadas y Wallapop no las
+        ha rechazado)."""
         master = self._app.master_ads.get(master_key)
         if master is None:
             return []
         used = self.used_photos()
+        rejected = self.rejected_photos()
         unused = [
             i for i in self._app.master_ads.effective_images(master)
             if i.get("source") != "demo" and self.photo_key(i) not in used
+            and self.photo_key(i) not in rejected
         ]
-        # Una foto borrada del ordenador no se puede subir: si se eligiera,
-        # fallarían uno tras otro todos los anuncios (siempre sería «la
-        # siguiente»). Se salta y se avisa en el registro.
-        present = [i for i in unused if i.get("path") and Path(i["path"]).is_file()]
+        # Una foto borrada o dañada no se puede subir: si se eligiera, fallarían
+        # uno tras otro todos los anuncios (siempre sería «la siguiente»). Se
+        # salta y se avisa (en el registro y en el historial).
+        present = [i for i in unused if not self.photo_problem(i.get("path"))]
         if len(present) < len(unused):
             logger.warning(
-                "%d foto(s) marcada(s) del Anuncio principal ya no están en el ordenador: se saltan.",
+                "%d foto(s) marcada(s) del Anuncio principal no se pueden subir: se saltan.",
                 len(unused) - len(present),
             )
         return present
@@ -1321,9 +1775,104 @@ class PublishQueue:
 
     def _next_rotating_photo(self, master_key: str | None) -> dict[str, Any] | None:
         """La primera foto marcada que todavía no se ha publicado en NINGUNA
-        cuenta (en el orden de «Fotografías…»)."""
-        unused = self.unused_photos(master_key)
-        return unused[0] if unused else None
+        cuenta (en el orden de «Fotografías…») ni está elegida por otro anuncio."""
+        with self._state_lock:
+            for photo in self.unused_photos(master_key):
+                if self.photo_key(photo) not in self._reserved_photos:
+                    return photo
+        return None
+
+    def _reserve_photo(
+        self, master_key: str | None, task_id: int, job_id: int
+    ) -> dict[str, Any] | None:
+        """Elige la foto de este anuncio y la aparta: con varias cuentas a la
+        vez, dos anuncios nunca cogen la misma foto."""
+        self._warn_skipped_photos(job_id, master_key)
+        with self._state_lock:
+            photo = self._next_rotating_photo(master_key)
+            if photo is not None:
+                self._reserved_photos[self.photo_key(photo)] = task_id
+            return photo
+
+    def _release_photo(self, key: str | None, *, used: bool = False) -> None:
+        """La foto apartada vuelve a estar libre (el anuncio no se publicó)."""
+        if not key:
+            return
+        with self._state_lock:
+            self._reserved_photos.pop(key, None)
+
+    def _warn_skipped_photos(self, job_id: int, master_key: str | None) -> None:
+        """Avisa (una vez por cola y foto) de las fotos que se saltan."""
+        for photo in self.missing_photos(master_key):
+            mark = (job_id, photo["ruta"])
+            if mark in self._photo_warned:
+                continue
+            self._photo_warned.add(mark)
+            self._audit.record_error(
+                "Foto del Anuncio principal que no se puede subir (se salta)",
+                error=f"«{photo['nombre']}» {photo['motivo']}.",
+                detail="Vuelve a añadirla en «Anuncio principal» → «Fotografías…».",
+            )
+            self._notify(job_id)
+
+    def _photos_ok_to_publish(self, job_id: int, master_key: str | None) -> bool:
+        """Sin «no repetir fotos» se suben TODAS las marcadas. Si falta alguna,
+        no se publica con menos sin avisar: la cola se pausa y lo explica. Si
+        la persona pulsa «Continuar», esta cola sigue con las que quedan."""
+        missing = self.missing_photos(master_key)
+        if not missing or job_id in self._accepted_missing:
+            return True
+        master = self._app.master_ads.get(master_key)
+        total = len([
+            i for i in self._app.master_ads.effective_images(master) if i.get("source") != "demo"
+        ]) if master else 0
+        names = [f"«{m['nombre']}» ({m['motivo']})" for m in missing]
+        self._missing_warned[job_id] = [m["nombre"] for m in missing]
+        self._audit.record_error(
+            "Faltan fotos del Anuncio principal",
+            error="; ".join(names),
+            detail=f"Cola {job_id}: pausada hasta que las añadas o pulses «Continuar».",
+        )
+        self.pause(
+            job_id,
+            MISSING_PHOTOS_MESSAGE.format(
+                n=len(missing), names=", ".join(names), left=max(0, total - len(missing))
+            ),
+        )
+        return False
+
+    def _photo_rejected(
+        self, task_id: int, job_id: int, code: str, photo_key: str | None, attempts: int,
+        message: str,
+    ) -> bool:
+        """Wallapop ha rechazado la foto de este anuncio. Con «no repetir
+        fotos», esa foto se aparta (no se vuelve a elegir) y el anuncio vuelve
+        a la cola con la siguiente, sin contar como fallo: una foto mala no
+        bloquea la cola."""
+        # Solo si Wallapop la RECHAZA: si tarda en cargar (red lenta) no es
+        # culpa de la foto y no se aparta.
+        if code != "ImageUploadError" or not photo_key or "rechaz" not in message.lower():
+            return False
+        with self._state_lock:
+            rejected = self.rejected_photos()
+            rejected[photo_key] = {
+                "motivo": message[:200],
+                "fecha": datetime.fromtimestamp(self.clock.now()).isoformat(timespec="seconds"),
+            }
+            self._save_setting(REJECTED_PHOTOS_KEY, rejected)
+        self._set_task(
+            task_id,
+            status=PublishTaskStatus.PENDING,
+            attempts=attempts,
+            error="Wallapop rechazó la foto de este anuncio: se apartará y se usará la siguiente.",
+            error_code="FOTO_RECHAZADA",
+        )
+        self._audit.record_error(
+            "Wallapop ha rechazado una foto (se aparta y se sigue)",
+            error=message[:300],
+            detail=f"Cola {job_id}",
+        )
+        return True
 
     def _preferred_rooms(self) -> list[str]:
         """Habitaciones que mejor han funcionado (si hay datos suficientes)."""
@@ -1381,7 +1930,8 @@ class PublishQueue:
             account_ref=ref,
             target=title,
         )
-        self._consecutive_failures += 1
+        with self._lanes_lock:
+            self._consecutive_failures += 1
         if code == "VerificationRequiredError":
             self._slow_down(ref)
         if pausing:
@@ -1424,6 +1974,8 @@ class PublishQueue:
             return False
         aliases = {a.internal_ref: a.alias for a in self._app.accounts.list_accounts()}
         alias = aliases.get(account_ref, account_ref)
+        if solved is not None and self._job_is_parallel(job_id):
+            return self._wait_verification_in_lane(job_id, account_ref, solved, focus)
         if solved is not None:
             defer = can_defer and self._others_can_publish(job_id, account_ref)
             self._verification_started(account_ref, job_id, deferred=defer)
@@ -1464,6 +2016,40 @@ class PublishQueue:
         finally:
             if solved is not None:
                 self._verification_cleared(account_ref)
+
+    def _wait_verification_in_lane(
+        self,
+        job_id: int,
+        account_ref: str,
+        solved: Callable[[], bool],
+        focus: Callable[[], Any] | None,
+    ) -> bool:
+        """Cola «a la vez»: Wallapop pide una verificación en UNA cuenta. Esa
+        cuenta espera a la persona (sin límite y sin resolverla nunca); las
+        demás siguen publicando. En cuanto desaparece, sigue sola desde el
+        mismo paso. False si la cola se cancela o LOT Bot se cierra."""
+        self._verification_started(account_ref, job_id, deferred=False)
+        try:
+            next_check = 0.0
+            while not self._stop.is_set():
+                if self._job_status(job_id) in (PublishJobStatus.CANCELLED, PublishJobStatus.COMPLETED):
+                    return False
+                if focus is not None and self._take_focus_request(account_ref):
+                    try:
+                        focus()
+                    except Exception:
+                        logger.debug("No se ha podido poner la ventana delante", exc_info=True)
+                if time.monotonic() >= next_check:
+                    next_check = time.monotonic() + 1.0
+                    try:
+                        if solved():
+                            return True
+                    except Exception:
+                        logger.debug("No se ha podido mirar la verificación", exc_info=True)
+                self._stop.wait(0.3)
+            return False
+        finally:
+            self._verification_cleared(account_ref)
 
     # ------------------------------------------------------------------
     # Verificaciones de Wallapop (las completa SIEMPRE la persona)
@@ -1658,3 +2244,55 @@ class PublishQueue:
                 listener(job_id)
             except Exception:  # la interfaz nunca debe tumbar la cola
                 logger.debug("Aviso de la cola fallido", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Reconocer un anuncio en «Tus productos» (sin fiarse solo del título)
+# ---------------------------------------------------------------------------
+def _norm(text: str) -> str:
+    from lot_bot.publishing.listings import _norm_text
+
+    return _norm_text(text or "")
+
+
+def _same_title(wanted: str, item: Any) -> bool:
+    """¿Es el mismo título? Igual, o contenido en el texto de la ficha, o
+    la ficha lo muestra recortado («Canapé abatible 135x190…»)."""
+    wanted = _norm(wanted)
+    if not wanted:
+        return False
+    shown = _norm(getattr(item, "title", "") or "")
+    text = _norm((getattr(item, "raw", None) or {}).get("texto") or "")
+    if shown == wanted or (text and wanted in text):
+        return True
+    cut = shown.rstrip(" .…")
+    return len(cut) >= 20 and wanted.startswith(cut)
+
+
+def _classify_items(items: list[Any], title: str, price: Any) -> tuple[list[Any], list[Any]]:
+    """(coinciden en título Y precio, mismo título pero precio desconocido)."""
+    matches, doubtful = [], []
+    for item in items:
+        if not _same_title(title, item):
+            continue
+        shown = getattr(item, "price", None)
+        if shown is None or price is None:
+            doubtful.append(item)
+        elif abs(float(shown) - float(price)) < 0.01:
+            matches.append(item)
+    return matches, doubtful
+
+
+def _doubt_reason(found: int, expected: int, doubtful: list[Any], price: Any) -> str:
+    base = "Comprobación manual: Wallapop no confirmó este anuncio y LOT Bot no puede asegurar si se publicó. "
+    if price is None:
+        detail = "No se sabe con qué precio se publicó (cola antigua)."
+    elif doubtful:
+        detail = f"En «Tus productos» hay {len(doubtful)} anuncio(s) nuevos con el mismo título pero sin precio visible."
+    elif found == 0:
+        detail = "En «Tus productos» no aparece ningún anuncio nuevo con el mismo título y precio: probablemente NO se publicó."
+    elif found < expected:
+        detail = f"En «Tus productos» hay {found} anuncio(s) nuevos con el mismo título y precio, y faltan {expected}."
+    else:
+        detail = f"En «Tus productos» hay {found} anuncio(s) nuevos con el mismo título y precio (se esperaban {expected}): alguno pudo publicarse a mano."
+    return base + detail + " Míralo en Wallapop y, si NO está, pulsa «Reintentar anuncio fallido»."

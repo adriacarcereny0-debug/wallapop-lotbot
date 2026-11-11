@@ -579,3 +579,37 @@ def test_navegador_real_sin_marca_no_toca_el_campo(servicio):
     resultado = service.create_item("cuenta-1", borrador(tmp_path))
     assert resultado.success, resultado.message
     assert web.published[0]["marca"] == ""
+
+
+def test_navegador_real_dos_cuentas_publican_a_la_vez(servicio):
+    """Dos cuentas publican AL MISMO TIEMPO, cada una en su propio Chromium
+    (su perfil y su sesión): los anuncios no se mezclan."""
+    import threading
+    import time
+    from dataclasses import replace
+
+    service, web, tmp_path = servicio
+    datos = {
+        "cuenta-1": replace(borrador(tmp_path), price=11.44),
+        "cuenta-2": replace(borrador(tmp_path), price=27.5),
+    }
+    resultados, tiempos = {}, {}
+
+    def publicar(ref):
+        inicio = time.monotonic()
+        resultados[ref] = service.create_item(ref, datos[ref])
+        tiempos[ref] = (inicio, time.monotonic())
+
+    hilos = [threading.Thread(target=publicar, args=(ref,)) for ref in datos]
+    for hilo in hilos:
+        hilo.start()
+    for hilo in hilos:
+        hilo.join(300)
+    assert all(r.success for r in resultados.values()), {k: v.message for k, v in resultados.items()}
+    # A la vez: las dos publicaciones se solapan en el tiempo.
+    (a0, a1), (b0, b1) = tiempos["cuenta-1"], tiempos["cuenta-2"]
+    assert a0 < b1 and b0 < a1
+    # Cada cuenta con su navegador y su perfil (nunca compartido).
+    assert service.pool.open_count == {"cuenta-1": 1, "cuenta-2": 1}
+    assert service.profiles.profile_dir("cuenta-1") != service.profiles.profile_dir("cuenta-2")
+    assert sorted(float(p["precio"].replace(",", ".")) for p in web.published) == [11.44, 27.5]
