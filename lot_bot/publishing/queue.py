@@ -1432,10 +1432,11 @@ class PublishQueue:
         listings = getattr(self._app, "listings", None)
         if listings is None:
             return set()
+        # Los ya eliminados no están en la cuenta: no cuentan como «lo que había».
         return {
             str(v.wallapop_item_id)
             for v in listings.search(ListingFilter(account_ref=ref, limit=5000))
-            if v.wallapop_item_id
+            if v.wallapop_item_id and v.status != "removed"
         }
 
     def _remember_known_listings(self, job_id: int, ref: str) -> None:
