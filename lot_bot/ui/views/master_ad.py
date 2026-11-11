@@ -92,16 +92,14 @@ class PublishDialog(QDialog):
         self.price.setSpecialValueText("El de la plantilla")
         form.addRow("Precio solo para estas", self.price)
         layout.addLayout(form)
-        self.parallel = QCheckBox(
-            "Publicar en las cuentas marcadas A LA VEZ (cada una con su propio navegador)"
-        )
+        self.parallel = QCheckBox("Publicar A LA VEZ en las cuentas marcadas")
+        self.parallel.setToolTip("Cada cuenta con su propio navegador y su propia cola.")
         self.parallel.setChecked(bool(app.publish_queue.settings().get("parallel_accounts")))
         layout.addWidget(self.parallel)
         hint = QLabel(
-            "Si indicas un número, las publicaciones se reparten entre las cuentas marcadas. "
-            "A la vez: cada cuenta publica sus anuncios en su navegador, al mismo tiempo que "
-            "las demás y respetando su propio ritmo. Si no, de una en una, por turnos. Un "
-            "precio aquí solo afecta a estas publicaciones: la plantilla no cambia."
+            "Las publicaciones se reparten entre las cuentas marcadas. A la vez: cada cuenta "
+            "con su navegador y a su ritmo. Si no, por turnos. El precio de aquí no cambia "
+            "la plantilla."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {theme.TEXT_MUTED};")
