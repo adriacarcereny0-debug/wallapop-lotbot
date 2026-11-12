@@ -31,6 +31,7 @@ from lot_bot.images.generation import (
     ImageGenerator,
 )
 from lot_bot.images.service import ImageService
+from lot_bot.licensing.guard import guard_backend
 from lot_bot.logs.setup import configure_logging
 from lot_bot.market.service import MarketService
 from lot_bot.master_ad.service import MasterAdService
@@ -92,6 +93,8 @@ class Application:
     analyzer: StatsAnalyzer = None  # type: ignore[assignment]
     optimizer: Optimizer = None  # type: ignore[assignment]
     business_settings: dict[str, Any] = field(default_factory=dict)
+    #: Licencia de este ordenador (None en pruebas antiguas).
+    license: Any = None
 
     # ------------------------------------------------------------------
     @property
@@ -186,7 +189,9 @@ class Application:
         old_close = getattr(self.backend.service, "shutdown", None)
         if callable(old_close):
             old_close()  # cierra los navegadores abiertos del backend anterior
-        self.backend = build_backend(self.settings, self.accounts, self.integration_mode)
+        self.backend = guard_backend(
+            build_backend(self.settings, self.accounts, self.integration_mode), self.license
+        )
         self.accounts.set_auth_method(self.backend.auth_method)
         self.listings.set_backend(self.wallapop)
         self.publishing.set_backend(self.wallapop)
@@ -212,6 +217,8 @@ class Application:
             if callable(close_browsers):
                 close_browsers()
             self.automations.shutdown()
+            if self.license is not None:
+                self.license.stop()
         finally:
             self.db.dispose()
         logger.info("%s cerrado correctamente.", APP_NAME)
@@ -286,7 +293,13 @@ def create_application(
     # En LOT Bot las cuentas no caducan: se deshace el estado «caducada» antiguo.
     accounts.restore_expired_accounts()
 
-    backend = build_backend(settings, accounts, load_integration_mode(db))
+    # Licencia: decide si se puede actuar en Wallapop real (DEMO, siempre).
+    from lot_bot.licensing import LicenseManager
+
+    license_manager = LicenseManager(paths.config)
+    backend = guard_backend(
+        build_backend(settings, accounts, load_integration_mode(db)), license_manager
+    )
     accounts.set_auth_method(backend.auth_method)
     logger.info("Backend de Wallapop: %s (%s)", backend.label, backend.reason)
     for item in backend.missing:
@@ -332,6 +345,7 @@ def create_application(
         automations=None,  # type: ignore[arg-type]
         agent=None,  # type: ignore[arg-type]
         business_settings=business,
+        license=license_manager,
     )
     app.automations = AutomationScheduler(app, db, events)
     app.agent = Agent(app, registry, ai_provider)
@@ -347,6 +361,10 @@ def create_application(
 
     app.updater = Updater(app_dir(), paths.root / "actualizacion.json")
     app.accounts.connected_listeners.append(app.publish_queue.account_reconnected)
+    # Al volver a estar activa la licencia, las colas que paró siguen solas.
+    license_manager.listeners.append(
+        lambda status: app.publish_queue.license_restored() if status.allowed else None
+    )
     # La primera cuenta REAL que se conecta borra todo lo de prueba.
     from lot_bot.core.demo_cleanup import on_account_connected
 
@@ -360,6 +378,8 @@ def create_application(
         # Lo único que se automatiza es la cola de publicación (≥ 60 s entre
         # anuncios). Las tareas programadas antiguas ya no se arrancan.
         app.publish_queue.start_worker()
+        # Renovar el pase de licencia en segundo plano (si esta versión la exige).
+        license_manager.start_background()
 
     seed_business_from_env(app)
 

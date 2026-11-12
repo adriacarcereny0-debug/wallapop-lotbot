@@ -1,0 +1,44 @@
+# Pruebas automáticas en Windows y Mac (Python 3.11, la versión mínima).
+#
+# Cada cambio que se sube se prueba en los dos sistemas: toda la batería de
+# pruebas (licencias incluidas) y la autoprueba del programa (interfaz, base
+# de datos, llavero, huella del ordenador y firma de licencias, navegador).
+name: Pruebas Windows y Mac
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main", "estable", "claude/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pruebas:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Dependencias
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Autoprueba del programa
+        run: python run_lot_bot.py --autoprueba
+
+      - name: Pruebas automáticas
+        run: python -m pytest -q

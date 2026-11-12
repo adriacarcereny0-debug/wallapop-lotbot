@@ -1,0 +1,77 @@
+# Licencias (fase 2)
+
+LOT Bot comprueba la licencia contra el servidor de la web (`web/`, API v1).
+El código está en `lot_bot/licensing/`.
+
+## Piezas
+
+| Fichero | Qué hace |
+|---|---|
+| `config.py` | Servidor (`https://www.lotbot.es`) y **clave pública** Ed25519 dentro del programa (`EMBEDDED_PUBLIC_KEYS`). |
+| `fingerprint.py` | Huella anónima del ordenador: SHA-256 de `MachineGuid` (Windows), `IOPlatformUUID` (macOS) o `/etc/machine-id` (Linux). Nunca se envía el identificador en claro. |
+| `lease.py` | Comprueba el pase `LBT1.<json>.<firma>`: firma, tipo, clave (`kh`) y ordenador (`dev`). |
+| `store.py` | `config/licencia.json` en la carpeta de datos. La clave va cifrada (misma caja que las demás claves locales). |
+| `client.py` | `POST /api/v1/license/{activate,refresh,deactivate}`. Separa respuestas definitivas de errores pasajeros. |
+| `manager.py` | Estado (`sin_exigir`, `sin_licencia`, `activa`, `bloqueada`), renovación en segundo plano, reloj. |
+| `guard.py` | Candado delante de Wallapop real: deja leer, no deja cambiar nada sin licencia. |
+| `lot_bot/ui/license.py` | Pantalla de activación, franja de aviso y pestaña Configuración → Licencia. |
+
+## Reglas
+
+* **Activar**: la persona escribe `LOTB-XXXX-XXXX-XXXX` (se admite en minúsculas,
+  con espacios o sin guiones). El servidor devuelve un pase de 72 h (nunca más
+  allá de la caducidad de la licencia).
+* **Renovar**: cada 4-6 h al azar, en segundo plano, y al abrir LOT Bot.
+* **Sin conexión**: sigue funcionando con el último pase hasta que caduca
+  (3 días). Se reintenta cada 15 min. Con menos de 24 h de margen sale un aviso.
+* **Respuesta definitiva** (`LICENSE_EXPIRED`, `LICENSE_SUSPENDED`,
+  `LICENSE_REVOKED`, `LICENSE_NOT_FOUND`, `DEVICE_BLOCKED`,
+  `DEVICE_NOT_ACTIVATED`): bloquea al momento y borra el pase. Se sigue
+  preguntando cada 30 min: si se renueva o se reactiva, vuelve sola.
+* **Errores pasajeros** (sin red, 5xx, `RATE_LIMITED`, `SERVER_NOT_CONFIGURED`):
+  nunca bloquean; se sigue con el pase que haya.
+* **Reloj**: si la hora va más de 10 min hacia atrás respecto a la más alta
+  vista, se bloquea hasta comprobar con el servidor. Un PC con la hora mal de
+  fábrica se corrige con la hora del servidor.
+* **Bloqueo seguro**: con la licencia no activa, el candado no deja publicar,
+  editar, borrar ni enviar mensajes en Wallapop real (sí leer). La cola mira la
+  licencia antes de cada anuncio: el que ya se está publicando termina
+  (`publication_in_progress`), los siguientes esperan y la cola se pausa con el
+  motivo «Licencia no activa…». Al volver a estar activa, sigue sola.
+* **Datos**: nada de esto borra ni cambia cuentas, anuncios, fotos ni ajustes.
+* **DEMO**: gratis, sin licencia y sin candado.
+
+## Activar las licencias en producción
+
+Mientras `EMBEDDED_PUBLIC_KEYS` esté vacío, LOT Bot **no exige licencia**
+(estado `sin_exigir`): así esta versión se puede publicar antes de tener el
+servidor listo sin dejar a ningún cliente sin programa.
+
+1. Generar el par de claves en tu ordenador: `node web/scripts/generar-claves.mjs`.
+2. La **privada** → Vercel → `LICENSE_SIGNING_KEY` (Production). Nunca al repositorio.
+3. Comprobar `https://www.lotbot.es/api/v1/public-key` → `"ok": true`.
+4. Crear las licencias de los clientes actuales en `/admin/licencias`.
+5. Pegar la **pública** en `EMBEDDED_PUBLIC_KEYS` (`lot_bot/licensing/config.py`)
+   y publicar la versión. Desde ese momento se exige licencia con Wallapop real.
+
+En el programa instalado (ejecutable) no se puede cambiar la clave pública ni
+el servidor con variables de entorno. Desde el código fuente sí, para pruebas:
+`LOT_BOT_LICENSE_PUBLIC_KEY` y `LOT_BOT_LICENSE_SERVER`.
+
+> Nota honesta: quien ejecuta LOT Bot desde el **código fuente** puede
+> modificarlo y saltarse cualquier comprobación local. La protección real
+> llega con los ejecutables firmados (Windows `.exe`, Mac `.app`).
+
+## Pruebas
+
+* `tests/test_licencias.py` (sin red): activar, formato, sin conexión, todos los
+  errores del servidor, pase falsificado/de otra clave/de otro ordenador,
+  renovación 4-6 h, 3 días sin conexión, reinicio sin red, reloj atrasado,
+  fichero manipulado o dañado, desvincular, candado, cola (pausa sin cortar el
+  anuncio en curso y reanudación sola), DEMO sin licencia.
+* `tests/test_licencias_servidor.py`: contra la web de verdad (Next.js +
+  Postgres). Se activan con `LOT_BOT_TEST_LICENSE_SERVER` y
+  `LOT_BOT_TEST_LICENSE_DB` (ver cabecera del fichero).
+* CI `.github/workflows/pruebas.yml`: toda la batería y la autoprueba en
+  Windows y Mac con Python 3.11. La autoprueba (`--autoprueba`) comprueba
+  también la huella del ordenador y la firma Ed25519 dentro del ejecutable.

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from lot_bot import APP_NAME
 from lot_bot.ui import icons, theme
+from lot_bot.ui.license import LicenseBanner
 from lot_bot.ui.update_banner import UpdateBanner, UpdateController
 from lot_bot.ui.verification_alert import VerificationAlert
 from lot_bot.ui.views import (
@@ -123,6 +124,9 @@ class MainWindow(QMainWindow):
         self.updates = UpdateController(self.app, TaskRunner(1), self)
         self.update_banner = UpdateBanner(self.updates)
         right.addWidget(self.update_banner)
+        # Licencia: franja solo si no está activa, va a caducar o lleva días sin conexión.
+        self.license_banner = LicenseBanner(self.app)
+        right.addWidget(self.license_banner)
         self.stack = QStackedWidget()
         self.stack.setObjectName("Content")
         right.addWidget(self.stack, 1)
@@ -256,6 +260,8 @@ class MainWindow(QMainWindow):
         self.mode_label.setText(("DEMO\n" if backend.demo else "") + f"{connected}/{len(accounts)}")
         self.mode_label.setToolTip(f"{connected} de {len(accounts)} cuentas conectadas\n\n{detail}")
         self.demo_banner.setVisible(backend.demo)
+        if hasattr(self, "license_banner"):
+            self.license_banner.refresh()
         self.demo_banner.setText(
             "MODO DEMO — Datos simulados. Nada de lo que hagas se envía a Wallapop: "
             "las publicaciones, precios y mensajes son de prueba."

@@ -70,6 +70,7 @@ from lot_bot.database.models import (
     PublishTaskStatus,
     Setting,
 )
+from lot_bot.licensing.guard import publication_in_progress
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,10 @@ SETTINGS_KEY = "publicacion"
 USED_PHOTOS_KEY = "fotos_usadas"
 #: Marca de que «no repetir fotos» ya se aplicó como opción de serie.
 NO_REPEAT_MIGRATION_KEY = "no_repetir_fotos_v2"
+#: Inicio del motivo de pausa cuando la licencia deja de estar activa (al
+#: volver a estar activa, esas colas siguen solas).
+LICENSE_PAUSE_PREFIX = "Licencia no activa"
+
 NO_PHOTOS_MESSAGE = (
     "Añade fotos nuevas: ya se han publicado todas las fotos marcadas del Anuncio "
     "principal y no se repite ninguna. Añádelas en «Anuncio principal» → «Fotografías…» "
@@ -840,6 +845,8 @@ class PublishQueue:
             if job_id is None:
                 return False
             self._check_clock()
+            if self._pause_if_unlicensed(job_id):
+                return True
             if self._job_is_parallel(job_id):
                 return self._coordinate_parallel(job_id)
             with self._db.session_scope() as session:
@@ -931,6 +938,8 @@ class PublishQueue:
 
         # 2. Esperar el intervalo mínimo. Mientras tanto se hace sitio (si la
         #    cuenta está al máximo).
+        if self._pause_if_unlicensed(job_id):
+            return True
         self._set_task(task_id, status=PublishTaskStatus.WAITING)
         service = getattr(self._app, "wallapop", None)
         if service is not None and hasattr(service, "user_gate"):
@@ -955,6 +964,12 @@ class PublishQueue:
                 elif status is PublishJobStatus.CANCELLED:
                     self._set_task(task_id, status=PublishTaskStatus.CANCELLED)
                 return True
+
+        # La licencia pudo caducar mientras se esperaba el turno: se mira justo
+        # antes de empezar. Lo que ya está publicándose (otra cuenta) termina.
+        if self._pause_if_unlicensed(job_id):
+            self._set_task(task_id, status=PublishTaskStatus.PENDING)
+            return True
 
         # 3. Fotos: comprobar que están todas (y que no están dañadas).
         only_images = None
@@ -990,16 +1005,17 @@ class PublishQueue:
         self._current_job = job_id
         self._remember_known_listings(job_id, ref)
         try:
-            outcome = self._app.master_ads.publish_single(
-                master_key,
-                ref,
-                payload.get("overrides") or {},
-                extra_images=[image_path] if image_path else None,
-                only_images=only_images,
-                meta={"imagen": payload.get("imagen") or {"origen": "plantilla"}},
-                confirmed=True,
-                actor=actor,
-            )
+            with publication_in_progress():  # empezado = termina, pase lo que pase
+                outcome = self._app.master_ads.publish_single(
+                    master_key,
+                    ref,
+                    payload.get("overrides") or {},
+                    extra_images=[image_path] if image_path else None,
+                    only_images=only_images,
+                    meta={"imagen": payload.get("imagen") or {"origen": "plantilla"}},
+                    confirmed=True,
+                    actor=actor,
+                )
         except Exception as exc:  # errores de configuración, capacidad...
             self._release_photo(photo_key)
             code = type(exc).__name__
@@ -2207,6 +2223,48 @@ class PublishQueue:
             self.resume(job_id)
             resumed.append(job_id)
         return resumed
+
+    # ------------------------------------------------------------------
+    # Licencia
+    # ------------------------------------------------------------------
+    def _license_blocked_reason(self) -> str | None:
+        """None si se puede publicar; si no, por qué (el modo DEMO es libre)."""
+        manager = getattr(self._app, "license", None)
+        if manager is None or getattr(self._app, "demo_mode", True):
+            return None
+        status = manager.status()
+        if status.allowed:
+            return None
+        return manager.describe(status)
+
+    def _pause_if_unlicensed(self, job_id: int) -> bool:
+        reason = self._license_blocked_reason()
+        if reason is None:
+            return False
+        if self._job_status(job_id) is PublishJobStatus.RUNNING:
+            self.pause(
+                job_id,
+                f"{LICENSE_PAUSE_PREFIX}: {reason} Lo publicado no se toca; al reactivarla, "
+                "la cola sigue sola.",
+            )
+        return True
+
+    def license_restored(self) -> list[int]:
+        """La licencia vuelve a estar activa: siguen las colas que se pararon por ella."""
+        if self._license_blocked_reason() is not None:
+            return []
+        with self._db.session_scope() as session:
+            ids = list(
+                session.scalars(
+                    select(PublishJob.id).where(
+                        PublishJob.status == PublishJobStatus.PAUSED,
+                        PublishJob.pause_reason.like(f"{LICENSE_PAUSE_PREFIX}%"),
+                    )
+                ).all()
+            )
+        for job_id in ids:
+            self.resume(job_id)
+        return ids
 
     def _account_usable(self, ref: str) -> bool:
         from lot_bot.database.models import AccountStatus

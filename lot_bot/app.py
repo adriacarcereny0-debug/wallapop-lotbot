@@ -82,6 +82,13 @@ def main(argv: list[str] | None = None) -> int:
     if app.demo_mode:
         seed_demo_catalog(app)
 
+    # Licencia: con Wallapop real y sin licencia activa, primero la pantalla de
+    # activación. Nunca impide abrir el programa («Continuar sin licencia»).
+    from lot_bot.ui.license import LicenseDialog, needs_license
+
+    if needs_license(app):
+        LicenseDialog(app.license).exec()
+
     window = MainWindow(app)
     window.show()
     logger.info("Ventana principal abierta.")

@@ -86,6 +86,38 @@ def _check_keyring() -> str:
     return name
 
 
+def _check_license(workdir: Path) -> str:
+    """Huella del ordenador y comprobación de un pase firmado (Ed25519)."""
+    import base64
+    import json
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    from lot_bot.licensing.fingerprint import device_info, system_machine_id
+    from lot_bot.licensing.lease import key_hash, verify_lease
+
+    machine = system_machine_id()
+    if machine is None and (sys.platform == "darwin" or sys.platform.startswith("win")):
+        raise RuntimeError("el sistema no ha dado su identificador de equipo")
+    device = device_info(workdir)
+    private = Ed25519PrivateKey.generate()
+    public = private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    key = "LOTB-TEST-TEST-TEST"
+    payload = {"v": 1, "typ": "lotbot-lease", "kid": "x", "lic": 1, "kh": key_hash(key),
+               "dev": device.fingerprint, "kind": "pago", "plan": None, "seats": 1,
+               "lic_exp": None, "iat": int(time.time()), "exp": int(time.time()) + 60}
+    body = "LBT1." + b64(json.dumps(payload).encode())
+    token = body + "." + b64(private.sign(body.encode()))
+    verify_lease(token, (public,), license_key=key, fingerprint=device.fingerprint)
+    origin = "identificador del sistema" if machine else "identificador propio"
+    return f"huella {device.fingerprint[:8]}… ({origin}, {device.os}); firma Ed25519 correcta"
+
+
 def _check_browser(workdir: Path) -> str:
     from lot_bot.wallapop.browser.driver import PlaywrightLauncher
 
@@ -122,6 +154,7 @@ def run() -> int:
             ("Interfaz", _check_qt),
             ("Base de datos", lambda: _check_database(workdir)),
             ("Llavero", _check_keyring),
+            ("Licencia", lambda: _check_license(workdir)),
             ("Navegador", lambda: _check_browser(workdir)),
         ]
         for name, check in checks:

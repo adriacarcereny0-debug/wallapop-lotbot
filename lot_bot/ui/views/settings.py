@@ -67,6 +67,7 @@ class SettingsView(BaseView):
         self.tabs.addTab(_scrollable(self._templates_tab()), "Plantillas")
         self.tabs.addTab(_scrollable(self._ai_tab()), "Asistente IA")
         self.tabs.addTab(_scrollable(self._wallapop_tab()), "Wallapop")
+        self.tabs.addTab(_scrollable(self._license_tab()), "Licencia")
         self.tabs.addTab(_scrollable(self._about_tab()), "Acerca de")
         self.body.addWidget(self.tabs, 1)
 
@@ -520,6 +521,12 @@ class SettingsView(BaseView):
         capabilities_card.add(self.capabilities_label)
         layout.addWidget(capabilities_card, 1)
         return widget
+
+    def _license_tab(self) -> QWidget:
+        from lot_bot.ui.license import LicensePanel
+
+        self.license_panel = LicensePanel(self.app)
+        return self.license_panel
 
     def _about_tab(self) -> QWidget:
         widget = QWidget()
