@@ -202,6 +202,17 @@ async function preflight(rawKey: string, fingerprint: string, ipHash: string) {
   return { license };
 }
 
+/** Desde qué conexiones (huella de la IP, nunca la IP) se usa cada licencia, por día. */
+async function noteConnection(licenseId: number, ipHash: string): Promise<void> {
+  if (!ipHash) return;
+  const sql = await db();
+  await sql`
+    INSERT INTO lotbot.license_connections (license_id, ip_hash, day, checks)
+    VALUES (${licenseId}, ${ipHash}, current_date, 1)
+    ON CONFLICT (license_id, ip_hash, day) DO UPDATE SET checks = license_connections.checks + 1
+  `;
+}
+
 /** Activa LOT Bot en un ordenador (o lo reactiva si ya estaba). */
 export async function activate(rawKey: string, device: DeviceInput, ipHash: string): Promise<LeaseResult> {
   const checked = await preflight(rawKey, device.fingerprint, ipHash);
@@ -272,6 +283,7 @@ export async function activate(rawKey: string, device: DeviceInput, ipHash: stri
     return null;
   });
   if (result) return result;
+  await noteConnection(license.id, ipHash);
   return issue(license, device.fingerprint, await info(license));
 }
 
@@ -298,6 +310,7 @@ export async function refresh(rawKey: string, device: DeviceInput, ipHash: strin
       app_version = CASE WHEN ${device.appVersion ?? ""} <> '' THEN ${device.appVersion ?? ""} ELSE app_version END
     WHERE license_id = ${license.id} AND fingerprint = ${device.fingerprint}
   `;
+  await noteConnection(license.id, ipHash);
   return issue(license, device.fingerprint, details);
 }
 

@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { licenseAlerts } from "@/lib/alerts";
 import { db } from "@/lib/db";
 import { signingConfigured } from "@/lib/signing";
 import { allPaymentMethods, plansAreExamples, siteSettings, stripeConfigured } from "@/lib/store";
@@ -31,7 +32,12 @@ export default async function Dashboard() {
   const methods = await allPaymentMethods();
   const examples = await plansAreExamples();
   const usable = methods.filter((m) => m.enabled && (m.id === "tarjeta" ? stripeConfigured() : m.instructions.trim()));
+  const alerts = await licenseAlerts();
   const todo = [
+    alerts.length > 0 && {
+      text: `Hay ${alerts.length} alerta${alerts.length === 1 ? "" : "s"} de posible abuso de licencias.`,
+      href: "/admin/alertas",
+    },
     !process.env.SESSION_SECRET && {
       text: "Falta SESSION_SECRET en Vercel: pon un texto largo y aleatorio (protege la sesión de /admin).",
       href: "/admin",

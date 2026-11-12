@@ -71,6 +71,10 @@ async function verifyToken(token) {
   };
 }
 
+test("(preparación) base de PRUEBAS sin versiones anteriores en oferta", async () => {
+  await sql`UPDATE lotbot.releases SET status = 'retirada' WHERE status = 'activa'`;
+});
+
 test("sin token (o con uno malo) no se puede registrar una versión", async () => {
   const body = { version: nextVersion(), assets: [asset("windows-x64", "9.9.9")] };
   assert.equal((await register(body, "")).status, 401);

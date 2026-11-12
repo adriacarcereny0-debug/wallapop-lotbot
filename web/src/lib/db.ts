@@ -321,6 +321,21 @@ const MIGRATIONS: { version: number; name: string; sql: string }[] = [
     ALTER TABLE lotbot.releases ENABLE ROW LEVEL SECURITY;
     `,
   },
+  {
+    version: 5,
+    name: "conexiones por licencia (detectar licencias compartidas)",
+    sql: `
+    CREATE TABLE IF NOT EXISTS lotbot.license_connections (
+      license_id integer NOT NULL REFERENCES lotbot.licenses(id) ON DELETE CASCADE,
+      ip_hash text NOT NULL,
+      day date NOT NULL,
+      checks integer NOT NULL DEFAULT 1,
+      PRIMARY KEY (license_id, ip_hash, day)
+    );
+    CREATE INDEX IF NOT EXISTS license_connections_day ON lotbot.license_connections (day);
+    ALTER TABLE lotbot.license_connections ENABLE ROW LEVEL SECURITY;
+    `,
+  },
 ];
 
 /** Número de bloqueo para las migraciones (cualquiera fijo). */
