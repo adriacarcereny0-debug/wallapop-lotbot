@@ -355,11 +355,19 @@ def create_application(
         db, build_image_generator(backend.demo, app.api_keys), paths.images / "generadas"
     )
     app.publish_queue = PublishQueue(db, audit, app)
-    # Actualizar con un clic desde GitHub (copias del repositorio).
-    from lot_bot.config.paths import app_dir
+    # Actualizaciones: versiones firmadas (programa instalado) o git (código fuente).
+    from lot_bot.config.paths import app_dir, is_frozen
     from lot_bot.core.updater import Updater
 
-    app.updater = Updater(app_dir(), paths.root / "actualizacion.json")
+    if is_frozen() and not (app_dir() / ".git").exists():
+        # Programa instalado (Windows .exe / Mac .app): versiones firmadas desde
+        # el servidor, solo con licencia.
+        from lot_bot.core.release_updater import ReleaseUpdater
+
+        app.updater = ReleaseUpdater(license_manager, paths.root / "actualizaciones")
+    else:
+        # Copia del código fuente: actualizar con git, como hasta ahora.
+        app.updater = Updater(app_dir(), paths.root / "actualizacion.json")
     app.accounts.connected_listeners.append(app.publish_queue.account_reconnected)
     # Al volver a estar activa la licencia, las colas que paró siguen solas.
     license_manager.listeners.append(

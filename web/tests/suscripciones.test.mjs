@@ -77,9 +77,9 @@ async function refresh(key, fingerprint) {
   return { status: response.status, data: await response.json() };
 }
 
-test("la base de datos está en el esquema 3", async () => {
+test("la base de datos tiene las suscripciones (esquema 3 o posterior)", async () => {
   const health = await (await fetch(`${BASE}/api/health`)).json();
-  assert.equal(health.schema, 3);
+  assert.ok(health.schema >= 3);
 });
 
 test("un aviso sin firma o con otra firma se rechaza", async () => {

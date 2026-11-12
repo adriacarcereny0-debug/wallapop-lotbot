@@ -13,6 +13,7 @@ const LINKS = [
   ["/admin/pedidos", "Pedidos"],
   ["/admin/licencias", "Licencias"],
   ["/admin/dispositivos", "Dispositivos"],
+  ["/admin/versiones", "Versiones"],
   ["/admin/pruebas", "Pruebas gratis"],
   ["/admin/clientes", "Clientes"],
   ["/admin/planes", "Planes y precios"],

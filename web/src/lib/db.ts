@@ -294,6 +294,33 @@ const MIGRATIONS: { version: number; name: string; sql: string }[] = [
     ALTER TABLE lotbot.password_tokens ENABLE ROW LEVEL SECURITY;
     `,
   },
+  {
+    version: 4,
+    name: "versiones del programa y actualizaciones",
+    sql: `
+    -- Cada fila = un instalador de una versión para una plataforma.
+    CREATE TABLE IF NOT EXISTS lotbot.releases (
+      id serial PRIMARY KEY,
+      version text NOT NULL,
+      version_sort integer[] NOT NULL,
+      platform text NOT NULL CHECK (platform IN ('windows-x64', 'mac-arm64', 'mac-intel')),
+      channel text NOT NULL DEFAULT 'estable' CHECK (channel IN ('estable', 'beta')),
+      asset_name text NOT NULL,
+      github_asset_id bigint,
+      download_url text NOT NULL DEFAULT '',
+      sha256 text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+      size bigint NOT NULL CHECK (size > 0),
+      notes text NOT NULL DEFAULT '',
+      rollout_percent integer NOT NULL DEFAULT 100 CHECK (rollout_percent BETWEEN 0 AND 100),
+      mandatory boolean NOT NULL DEFAULT false,
+      status text NOT NULL DEFAULT 'activa' CHECK (status IN ('activa', 'retirada')),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (version, platform, channel)
+    );
+    CREATE INDEX IF NOT EXISTS releases_lookup ON lotbot.releases (platform, channel, status, version_sort);
+    ALTER TABLE lotbot.releases ENABLE ROW LEVEL SECURITY;
+    `,
+  },
 ];
 
 /** Número de bloqueo para las migraciones (cualquiera fijo). */

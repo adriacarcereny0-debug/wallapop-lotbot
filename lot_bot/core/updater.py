@@ -48,6 +48,8 @@ class UpdateInfo:
     latest: str = ""
     requirements_changed: bool = False
     message: str = ""
+    #: Versión obligatoria (la franja insiste más).
+    mandatory: bool = False
 
 
 @dataclass(slots=True)

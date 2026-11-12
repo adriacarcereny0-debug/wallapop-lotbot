@@ -71,6 +71,36 @@ class Lease:
             raise LeaseError("Al pase le faltan datos.") from exc
 
 
+def verify_signed(token: str, public_keys: tuple[bytes, ...], token_type: str) -> dict[str, Any]:
+    """Comprueba la firma Ed25519 y el tipo de un texto firmado por el servidor."""
+    if not public_keys:
+        raise LeaseError("No hay clave pública para comprobar la firma.")
+    parts = (token or "").strip().split(".")
+    if len(parts) != 3 or parts[0] != TOKEN_PREFIX:
+        raise LeaseError("No tiene el formato esperado.")
+    signed = f"{parts[0]}.{parts[1]}".encode("ascii")
+    try:
+        signature = _b64url_decode(parts[2])
+        body = _b64url_decode(parts[1])
+    except (binascii.Error, ValueError, UnicodeEncodeError) as exc:
+        raise LeaseError("Está dañado.") from exc
+    for raw in public_keys:
+        try:
+            Ed25519PublicKey.from_public_bytes(raw).verify(signature, signed)
+            break
+        except (InvalidSignature, ValueError):
+            continue
+    else:
+        raise LeaseError("La firma no es válida.")
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LeaseError("Está dañado.") from exc
+    if not isinstance(data, dict) or data.get("typ") != token_type or data.get("v") != 1:
+        raise LeaseError("No es del tipo esperado.")
+    return data
+
+
 def verify_lease(
     token: str,
     public_keys: tuple[bytes, ...],

@@ -1,0 +1,288 @@
+# Versión para clientes: compila Windows y Mac, los PRUEBA como los usaría el
+# cliente y, con una etiqueta vX.Y.Z, los publica y avisa a la web para que
+# LOT Bot se actualice solo.
+#
+# Publicar una versión:
+#   1. Sube «__version__» en lot_bot/__init__.py (p. ej. 1.1.0) y pásalo a «estable».
+#   2. git tag -a v1.1.0 -m "• Qué ha cambiado" && git push origin v1.1.0
+#   El mensaje de la etiqueta son las novedades que ve el cliente.
+#
+# Secretos (Settings → Secrets → Actions):
+#   RELEASE_API_TOKEN       el mismo que en Vercel (registrar la versión en la web)
+#   WINDOWS_CERT_PFX_BASE64, WINDOWS_CERT_PASSWORD   (opcional) firma Authenticode
+#   MACOS_CERT_P12_BASE64, MACOS_CERT_PASSWORD, MACOS_SIGN_IDENTITY,
+#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD      (opcional) firma y notarización
+# Variable (Settings → Variables): LOTBOT_SITE_URL (por defecto https://www.lotbot.es)
+name: Versión para clientes
+
+on:
+  push:
+    tags: ["v*"]
+    branches: ["claude/**"]
+    paths:
+      - "build/**"
+      - ".github/workflows/publicar-version.yml"
+      - "lot_bot/core/release_updater.py"
+      - "lot_bot/selfcheck.py"
+  workflow_dispatch:
+    inputs:
+      canal:
+        description: "Canal (solo con etiqueta)"
+        type: choice
+        options: [estable, beta]
+        default: estable
+      despliegue:
+        description: "Porcentaje de clientes que la reciben al principio"
+        default: "100"
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          VERSION=$(python3 -c "import re;print(re.search(r'__version__ = \"(.+?)\"', open('lot_bot/__init__.py').read()).group(1))")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF#refs/tags/v}" != "$VERSION" ]]; then
+            echo "::error::La etiqueta ${GITHUB_REF#refs/tags/} no coincide con __version__ = $VERSION"
+            exit 1
+          fi
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      HAY_CERT_WIN: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compilar LOT-Bot.exe
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File build\build_windows.ps1
+
+      - name: Firmar LOT-Bot.exe (si hay certificado)
+        if: env.HAY_CERT_WIN == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $pfx = "$env:RUNNER_TEMP\cert.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          & $signtool.FullName sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 dist\LOT-Bot\LOT-Bot.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Crear el instalador
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:VERSION" build\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-Item "dist\LOT-Bot-Setup-$env:VERSION.exe" | Format-List Name, Length
+
+      - name: Firmar el instalador (si hay certificado)
+        if: env.HAY_CERT_WIN == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $pfx = "$env:RUNNER_TEMP\cert.pfx"
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          & $signtool.FullName sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 "dist\LOT-Bot-Setup-$env:VERSION.exe"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Probar como el cliente (instalar, actualizar encima, desinstalar)
+        shell: pwsh
+        run: |
+          $setup = (Resolve-Path "dist\LOT-Bot-Setup-$env:VERSION.exe").Path
+          $exe = "$env:LOCALAPPDATA\Programs\LOT Bot\LOT-Bot.exe"
+          $log = "$env:RUNNER_TEMP\autoprueba.txt"
+          $env:LOT_BOT_AUTOPRUEBA_LOG = $log
+          function Autoprueba([string]$cuando) {
+            $p = Start-Process $exe -ArgumentList "--autoprueba" -Wait -PassThru
+            Write-Host "--- Autoprueba ($cuando) ---"; Get-Content $log
+            if ($p.ExitCode -ne 0) { throw "La autoprueba ha fallado ($cuando)" }
+          }
+
+          # 1. Instalar sin permisos de administrador.
+          $p = Start-Process $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/NOLAUNCH" -Wait -PassThru
+          if ($p.ExitCode -ne 0 -or -not (Test-Path $exe)) { throw "No se ha instalado (codigo $($p.ExitCode))" }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\LOT Bot.lnk")) { throw "Falta el acceso en el menu Inicio" }
+          Autoprueba "recien instalado"
+
+          # 2. Datos del cliente: deben sobrevivir a actualizar y a desinstalar.
+          $datos = "$env:LOCALAPPDATA\LOT Bot\config"
+          New-Item -ItemType Directory -Force -Path $datos | Out-Null
+          Set-Content "$datos\marca-de-prueba.txt" "datos del cliente"
+
+          # 3. Actualizar encima, igual que lo hace LOT Bot (modo silencioso).
+          $p = Start-Process $setup -ArgumentList "/SILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS","/SP-","/NOLAUNCH" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "La actualizacion encima ha fallado (codigo $($p.ExitCode))" }
+          Autoprueba "tras actualizar"
+
+          # 4. Desinstalar: se va el programa, se quedan los datos.
+          $p = Start-Process "$env:LOCALAPPDATA\Programs\LOT Bot\unins000.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait -PassThru
+          Start-Sleep -Seconds 5
+          if (Test-Path $exe) { throw "La desinstalacion no ha quitado el programa" }
+          if (-not (Test-Path "$datos\marca-de-prueba.txt")) { throw "La desinstalacion ha borrado los datos del cliente" }
+          Write-Host "Instalar, actualizar y desinstalar: correcto. Datos del cliente intactos."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/LOT-Bot-Setup-${{ needs.version.outputs.version }}.exe
+          if-no-files-found: error
+
+  mac:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      HAY_CERT_MAC: ${{ secrets.MACOS_CERT_P12_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Certificado de Apple (si está configurado)
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        if: env.HAY_CERT_MAC == 'true'
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/firma.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+      - name: Compilar LOT Bot.app y el .dmg (incluye autoprueba)
+        env:
+          MAC_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          python3 -m pip install --upgrade pip
+          ./build/build_macos.sh
+      - name: Probar la actualización de Mac (sustituir la app desde el .dmg)
+        run: |
+          DMG="$PWD/dist/LOT-Bot-macOS-${{ matrix.arch }}.dmg"
+          APPS="$RUNNER_TEMP/Aplicaciones"; mkdir -p "$APPS"
+          cp -R "dist/LOT Bot.app" "$APPS/"
+          echo "version anterior" > "$APPS/LOT Bot.app/Contents/marca-vieja.txt"
+          SCRIPT=$(.venv-build/bin/python -c "from lot_bot.core.release_updater import MAC_INSTALL_SCRIPT;print(MAC_INSTALL_SCRIPT)")
+          printf '%s\n' "$SCRIPT" | sed 's#^open "\$APP"#echo "abriria $APP"#' > "$RUNNER_TEMP/instalar.sh"
+          cp "$DMG" "$RUNNER_TEMP/copia.dmg"
+          bash "$RUNNER_TEMP/instalar.sh" 999999 "$RUNNER_TEMP/copia.dmg" "$APPS/LOT Bot.app" "$RUNNER_TEMP/instalar.log"
+          cat "$RUNNER_TEMP/instalar.log"
+          grep -q "^OK" "$RUNNER_TEMP/instalar.log"
+          test ! -f "$APPS/LOT Bot.app/Contents/marca-vieja.txt"
+          codesign --verify --deep --strict "$APPS/LOT Bot.app"
+          "$APPS/LOT Bot.app/Contents/MacOS/LOT-Bot" --autoprueba
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ matrix.arch }}
+          path: dist/LOT-Bot-macOS-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
+  publicar:
+    # Solo con una etiqueta vX.Y.Z y si Windows y los dos Mac se han compilado Y probado.
+    needs: [version, windows, mac]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Novedades (mensaje de la etiqueta)
+        run: |
+          git fetch --force --tags
+          git tag -l --format='%(contents)' "v$VERSION" | sed '/-----BEGIN/,$d' > notas.txt
+          [ -s notas.txt ] || echo "• Mejoras y arreglos." > notas.txt
+          cat notas.txt; ls -la dist
+      - name: Publicar en GitHub
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: LOT Bot ${{ env.VERSION }}
+          body_path: notas.txt
+          make_latest: true
+          files: |
+            dist/LOT-Bot-Setup-${{ env.VERSION }}.exe
+            dist/LOT-Bot-macOS-arm64.dmg
+            dist/LOT-Bot-macOS-intel.dmg
+      - name: Registrar la versión en la web (LOT Bot se actualiza solo)
+        env:
+          RELEASE_API_TOKEN: ${{ secrets.RELEASE_API_TOKEN }}
+          SITE: ${{ vars.LOTBOT_SITE_URL || 'https://www.lotbot.es' }}
+          ASSETS: ${{ steps.release.outputs.assets }}
+          CANAL: ${{ inputs.canal || 'estable' }}
+          DESPLIEGUE: ${{ inputs.despliegue || '100' }}
+        run: |
+          if [ -z "$RELEASE_API_TOKEN" ]; then
+            echo "::warning::Falta RELEASE_API_TOKEN: la versión está en GitHub pero LOT Bot no la ofrecerá hasta registrarla."
+            exit 0
+          fi
+          python3 - <<'PY'
+          import hashlib, json, os, urllib.request
+          version = os.environ["VERSION"]
+          assets = {a["name"]: a for a in json.loads(os.environ["ASSETS"])}
+          files = {
+              "windows-x64": f"LOT-Bot-Setup-{version}.exe",
+              "mac-arm64": "LOT-Bot-macOS-arm64.dmg",
+              "mac-intel": "LOT-Bot-macOS-intel.dmg",
+          }
+          body = {
+              "version": version,
+              "channel": os.environ["CANAL"],
+              "rollout_percent": int(os.environ["DESPLIEGUE"]),
+              "notes": open("notas.txt", encoding="utf-8").read().strip(),
+              "assets": [],
+          }
+          for platform, name in files.items():
+              path = f"dist/{name}"
+              data = open(path, "rb").read()
+              body["assets"].append({
+                  "platform": platform, "name": name,
+                  "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
+                  "github_asset_id": assets[name]["id"], "url": assets[name]["browser_download_url"],
+              })
+          request = urllib.request.Request(
+              os.environ["SITE"].rstrip("/") + "/api/v1/releases",
+              data=json.dumps(body).encode(), method="POST",
+              headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["RELEASE_API_TOKEN"]},
+          )
+          with urllib.request.urlopen(request, timeout=60) as response:
+              print(response.status, response.read().decode())
+          PY

@@ -28,6 +28,9 @@ Postgres. Las tablas se crean solas la primera vez.
    | `SITE_URL` | La dirección de la web, p. ej. `https://lotbot.es` (sin `/` al final). |
    | `STRIPE_SECRET_KEY` | *(Para tarjeta y suscripciones)* clave secreta de Stripe (`sk_live_…`). |
    | `STRIPE_WEBHOOK_SECRET` | *(Opcional, para tarjeta)* secreto del webhook (`whsec_…`). |
+   | `RELEASE_API_TOKEN` | *(Actualizaciones)* texto aleatorio de 32+ caracteres. El mismo va en GitHub → Secrets como `RELEASE_API_TOKEN`: con él GitHub Actions registra cada versión. |
+   | `GITHUB_RELEASES_REPO` | *(Actualizaciones)* `usuario/repositorio` donde se publican las versiones. |
+   | `GITHUB_RELEASES_TOKEN` | *(Actualizaciones, repositorio privado)* token de GitHub de solo lectura (*fine-grained*, permiso «Contents: Read» en ese repositorio). Con él la web entrega las descargas sin hacer público el repositorio. |
 5. **Deploy.** Pulsa *Redeploy* para que use las variables. Comprueba
    `https://tu-web/api/health`: debe decir base de datos «conectada» y firma
    «configurada».

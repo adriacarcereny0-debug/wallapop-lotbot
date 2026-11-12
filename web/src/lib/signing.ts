@@ -82,6 +82,30 @@ export function signLease(payload: Omit<LeasePayload, "kid" | "v" | "typ">): str
   return `${body}.${b64url(signature)}`;
 }
 
+/** Datos de una actualización: versión, plataforma y huella SHA-256 del instalador. */
+export type UpdatePayload = {
+  v: 1;
+  typ: "lotbot-update";
+  kid: string;
+  ver: string;
+  plat: string;
+  sha256: string;
+  size: number;
+  mandatory: boolean;
+  dev: string;
+  iat: number;
+  exp: number;
+};
+
+/** Firma lo que LOT Bot tiene que comprobar antes de instalar una versión. */
+export function signUpdate(payload: Omit<UpdatePayload, "kid" | "v" | "typ">): string {
+  const loaded = loadKey();
+  if (!loaded) throw new Error("Falta LICENSE_SIGNING_KEY.");
+  const full: UpdatePayload = { v: 1, typ: "lotbot-update", kid: loaded.kid, ...payload };
+  const body = `${TOKEN_PREFIX}.${b64url(Buffer.from(JSON.stringify(full), "utf8"))}`;
+  return `${body}.${b64url(sign(null, Buffer.from(body, "utf8"), loaded.key))}`;
+}
+
 /** Huella de la clave de licencia (el pase no lleva la clave en claro). */
 export function keyHash(licenseKey: string): string {
   return createHash("sha256").update(licenseKey.trim().toUpperCase()).digest("hex").slice(0, 16);

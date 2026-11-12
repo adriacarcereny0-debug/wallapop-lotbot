@@ -176,6 +176,28 @@ export async function passwordLinkAction(form: FormData): Promise<void> {
   back("/admin/clientes", `Enlace para ${customer.email} (vale 48 h, un solo uso): ${link}`);
 }
 
+// --- Versiones ---------------------------------------------------------------
+export async function releaseUpdateAction(form: FormData): Promise<void> {
+  await requireAdmin();
+  const id = num(form.get("id"));
+  const op = cleanText(form.get("op"), 20);
+  const sql = await db();
+  let rows: { version: string; platform: string }[] = [];
+  if (op === "rollout") {
+    const percent = Math.max(0, Math.min(100, Math.round(num(form.get("rollout"), 100) ?? 100)));
+    rows = await sql`UPDATE lotbot.releases SET rollout_percent = ${percent} WHERE id = ${id} RETURNING version, platform`;
+    if (rows.length) await logEvent("Despliegue de versión", `${rows[0].version} ${rows[0].platform} → ${percent} %`, "admin");
+  } else if (op === "retire" || op === "restore") {
+    const status = op === "retire" ? "retirada" : "activa";
+    rows = await sql`UPDATE lotbot.releases SET status = ${status} WHERE id = ${id} RETURNING version, platform`;
+    if (rows.length) await logEvent(`Versión ${status}`, `${rows[0].version} ${rows[0].platform}`, "admin");
+  } else if (op === "mandatory") {
+    rows = await sql`UPDATE lotbot.releases SET mandatory = NOT mandatory WHERE id = ${id} RETURNING version, platform`;
+    if (rows.length) await logEvent("Versión obligatoria (cambio)", `${rows[0].version} ${rows[0].platform}`, "admin");
+  }
+  back("/admin/versiones", rows.length ? "Versión actualizada." : undefined);
+}
+
 // --- Pruebas gratis ---------------------------------------------------------
 export async function allowTrialAgainAction(form: FormData): Promise<void> {
   await requireAdmin();

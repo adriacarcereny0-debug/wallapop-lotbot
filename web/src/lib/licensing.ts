@@ -301,6 +301,33 @@ export async function refresh(rawKey: string, device: DeviceInput, ipHash: strin
   return issue(license, device.fingerprint, details);
 }
 
+/**
+ * Para pedir actualizaciones: la licencia tiene que estar en uso en ESTE
+ * ordenador (activado, no bloqueado, ni caducada, suspendida o revocada).
+ */
+export async function authorizeDevice(
+  rawKey: string,
+  fingerprint: string,
+  ipHash: string,
+): Promise<{ license: { id: number; key: string } } | { error: Extract<LeaseResult, { ok: false }> }> {
+  const checked = await preflight(rawKey, fingerprint, ipHash);
+  if ("error" in checked) return { error: checked.error as Extract<LeaseResult, { ok: false }> };
+  const license = checked.license;
+  const sql = await db();
+  const [device] = await sql<{ status: string }[]>`
+    SELECT status FROM lotbot.devices WHERE license_id = ${license.id} AND fingerprint = ${fingerprint}
+  `;
+  if (device?.status === "bloqueado") {
+    return { error: fail("DEVICE_BLOCKED", "Este ordenador está bloqueado para esta licencia.") as Extract<LeaseResult, { ok: false }> };
+  }
+  if (device?.status !== "activo") {
+    return { error: fail("DEVICE_NOT_ACTIVATED", "Este ordenador no está activado con esta licencia.") as Extract<LeaseResult, { ok: false }> };
+  }
+  const problem = unusable(license, await info(license));
+  if (problem) return { error: problem as Extract<LeaseResult, { ok: false }> };
+  return { license: { id: license.id, key: license.key } };
+}
+
 export type DeactivateResult = { ok: true } | { ok: false; code: ErrorCode; message: string };
 
 /** El cliente libera este ordenador (para usar la licencia en otro). */

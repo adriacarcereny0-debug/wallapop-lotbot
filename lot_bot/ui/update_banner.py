@@ -102,8 +102,12 @@ class UpdateController:
                     listener(self.info)
                 return
             self.app.audit.record_success("LOT Bot actualizado", detail=result.message)
-            info_box(self.parent, "Actualizado", result.message + "\n\nLOT Bot se va a reiniciar.")
-            restart_lot_bot()
+            if getattr(self.updater, "restarts_itself", False):
+                # Programa instalado: el instalador cierra LOT Bot y lo vuelve a abrir.
+                info_box(self.parent, "Actualizando", result.message)
+            else:
+                info_box(self.parent, "Actualizado", result.message + "\n\nLOT Bot se va a reiniciar.")
+                restart_lot_bot()
             QApplication.quit()
 
         def failed(message: str, detail: str) -> None:
@@ -181,11 +185,13 @@ class UpdateBanner(QFrame):
         self.update_button.setEnabled(True)
         self.changes_button.setEnabled(True)
         if info.available:
-            self.label.setText(
-                f"Hay una actualización de LOT Bot ({info.behind} "
-                f"{'cambio' if info.behind == 1 else 'cambios'}). Tarda menos de un minuto y tus "
-                "datos no se tocan."
-            )
+            if info.behind:
+                what = f"Hay una actualización de LOT Bot ({info.behind} {'cambio' if info.behind == 1 else 'cambios'})."
+            else:
+                what = f"Hay una versión nueva de LOT Bot ({info.latest})."
+            if info.mandatory:
+                what = f"Actualización importante de LOT Bot ({info.latest}): instálala cuanto antes."
+            self.label.setText(f"{what} Tarda menos de un minuto y tus datos no se tocan.")
         self.setVisible(info.available)
 
     def _show_changes(self) -> None:

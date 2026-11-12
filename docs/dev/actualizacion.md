@@ -1,26 +1,46 @@
 # Actualizar y mantener LOT Bot
 
-## Publicar una versión nueva
+## Publicar una versión nueva (Windows y Mac, actualización automática)
 
-1. Actualiza `__version__` en `lot_bot/__init__.py` y `version` en `pyproject.toml`.
-2. Actualiza `build/version_info.txt` (`filevers`, `prodvers`, cadenas de versión).
-3. Ejecuta `./scripts/check.sh`.
-4. Compila: `powershell -ExecutionPolicy Bypass -File build\build_windows.ps1`.
-5. Prueba el `.exe` en una máquina sin Python.
-6. Comprime `dist\LOT-Bot` como `LOT-Bot-<versión>.zip`.
-7. Etiqueta el repositorio: `git tag v1.0.1 && git push --tags`.
+1. Sube `__version__` en `lot_bot/__init__.py` (y `version` en `pyproject.toml`).
+2. Pasa los cambios a la rama `estable`.
+3. Crea la etiqueta con las novedades que verá el cliente:
+   `git tag -a v1.1.0 -m "• Qué ha cambiado" && git push origin v1.1.0`
+4. GitHub Actions (`publicar-version.yml`):
+   - compila el instalador de Windows (Inno Setup) y la app de Mac (chip Apple e Intel);
+   - los PRUEBA como el cliente: instalar sin permisos de administrador,
+     autoprueba, actualizar encima, desinstalar (los datos se quedan) y, en
+     Mac, sustituir la app desde el .dmg;
+   - firma si hay certificados (Authenticode / Developer ID + notarización);
+   - publica la versión en GitHub y la registra en la web.
+5. En `/admin/versiones` decides a cuántos llega (despliegue gradual), si es
+   obligatoria o si la retiras.
 
-## Cómo actualiza el cliente
+Variables necesarias: `RELEASE_API_TOKEN` (Vercel y GitHub Secrets, el mismo),
+`GITHUB_RELEASES_REPO` y `GITHUB_RELEASES_TOKEN` (Vercel). Ver `web/README.md`.
 
-1. Cierra LOT Bot.
-2. Renombra su carpeta actual a `LOT-Bot-anterior`.
-3. Descomprime la nueva.
-4. Copia de la carpeta anterior, si los había personalizado: `.env` y
-   `config\endpoint_map.local.yaml`.
-5. Abre `LOT-Bot.exe`.
+## Cómo se actualiza el cliente
 
-**Sus datos no están en la carpeta del programa**, sino en `%LOCALAPPDATA%\LOT Bot`.
-Al actualizar no se pierde nada: catálogo, cuentas, historial y ajustes siguen ahí.
+**Programa instalado** (`lot_bot/core/release_updater.py`):
+
+1. Al abrir y cada pocas horas, LOT Bot pregunta a la web con su licencia
+   (solo las licencias activas reciben versiones).
+2. Si hay una nueva, sale la franja «Hay una versión nueva» → «Actualizar».
+3. Descarga el instalador y comprueba su tamaño y su huella SHA-256 contra un
+   pase **firmado** por el servidor (Ed25519, la misma clave que las
+   licencias). Si no cuadra, no instala nada.
+4. Windows: ejecuta el instalador en modo silencioso; cierra LOT Bot, lo
+   sustituye y lo vuelve a abrir. Mac: un guion espera a que LOT Bot se
+   cierre, monta el .dmg, comprueba la firma de la app, sustituye
+   «LOT Bot.app» y la abre.
+5. Nunca se actualiza con una cola publicando.
+
+**Copia del código fuente** (desarrollo, clientes antiguos): sigue el
+actualizador por git (`lot_bot/core/updater.py`), rama `estable`.
+
+**Sus datos no están en la carpeta del programa**, sino en `%LOCALAPPDATA%\LOT Bot`
+(Windows) o `~/Library/Application Support/LOT Bot` (Mac). Instalar, actualizar
+o desinstalar no los toca.
 
 ## Cambios en la base de datos
 

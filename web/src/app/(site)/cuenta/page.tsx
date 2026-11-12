@@ -4,6 +4,7 @@ import Link from "next/link";
 import { billingConfigured, GRACE_DAYS, priceFor } from "@/lib/billing";
 import { requireCustomer } from "@/lib/customer-auth";
 import { db } from "@/lib/db";
+import { downloadTicket, type Release } from "@/lib/releases";
 import { listPlans } from "@/lib/store";
 import { formatDate, formatMoney } from "@/lib/util";
 
@@ -64,6 +65,16 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
   `;
   const live = subscriptions.find((s) => ["active", "trialing", "past_due", "unpaid", "incomplete"].includes(s.status));
   const plans = (await listPlans()).filter((p) => p.billing_interval);
+  // Descargas: solo con una licencia en vigor (la última versión estable de cada sistema).
+  const usable = licenses.find(
+    (l) => l.status === "activa" && (!l.expires_at || new Date(l.expires_at) > new Date()),
+  );
+  const downloads = usable
+    ? await sql<Release[]>`
+        SELECT DISTINCT ON (platform) * FROM lotbot.releases
+        WHERE status = 'activa' AND channel = 'estable'
+        ORDER BY platform, version_sort DESC`
+    : [];
   const billing = billingConfigured();
 
   return (
@@ -177,6 +188,29 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
             Escribe la clave en LOT Bot (Configuración → Licencia). LOT Bot la comprueba solo cada pocas horas y
             funciona hasta 3 días sin Internet.
           </p>
+        </section>
+
+        {/* Descargas */}
+        <section className="card stack" style={{ marginTop: 18, padding: 24 }}>
+          <h2 style={{ margin: 0, fontSize: 20 }}>Descargar LOT Bot</h2>
+          {!usable ? (
+            <p className="muted" style={{ margin: 0 }}>Las descargas aparecen aquí cuando tienes una licencia activa.</p>
+          ) : downloads.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>Todavía no hay instaladores publicados. Escríbenos y te ayudamos a instalarlo.</p>
+          ) : (
+            <>
+              <div className="row-actions">
+                {downloads.map((d) => (
+                  <a key={d.id} className="btn small" href={`/api/v1/updates/download?t=${downloadTicket(d.id, usable.id)}`}>
+                    {d.platform === "windows-x64" ? "Windows" : d.platform === "mac-arm64" ? "Mac con chip Apple (M1–M4)" : "Mac con Intel"} · {d.version}
+                  </a>
+                ))}
+              </div>
+              <p className="faint" style={{ margin: 0 }}>
+                Una vez instalado, LOT Bot se actualiza solo. En Mac: abre el .dmg y arrastra LOT Bot a Aplicaciones.
+              </p>
+            </>
+          )}
         </section>
 
         {/* Ordenadores */}

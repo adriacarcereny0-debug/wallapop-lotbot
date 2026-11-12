@@ -141,7 +141,24 @@ def _check_browser(workdir: Path) -> str:
 
 
 def run() -> int:
-    """Ejecuta todas las comprobaciones. 0 = todo correcto."""
+    """Ejecuta todas las comprobaciones. 0 = todo correcto.
+
+    El .exe de Windows no tiene consola: el resultado se escribe entonces en
+    el fichero de LOT_BOT_AUTOPRUEBA_LOG (o en la carpeta temporal)."""
+    target = os.environ.get("LOT_BOT_AUTOPRUEBA_LOG")
+    if target or sys.stdout is None:
+        path = Path(target) if target else Path(tempfile.gettempdir()) / "lotbot-autoprueba.txt"
+        with path.open("w", encoding="utf-8") as handle:
+            previous_out, previous_err = sys.stdout, sys.stderr
+            sys.stdout = sys.stderr = handle
+            try:
+                return _run()
+            finally:
+                sys.stdout, sys.stderr = previous_out, previous_err
+    return _run()
+
+
+def _run() -> int:
     print("=== LOT Bot · autoprueba ===", flush=True)
     print(f"Sistema: {sys.platform} · Python {sys.version.split()[0]}", flush=True)
     failures = 0
