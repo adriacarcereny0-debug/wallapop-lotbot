@@ -19,6 +19,11 @@ export function stripe(): Stripe {
   return client;
 }
 
+/** Solo para comprobar la firma de los avisos (no llama a Stripe). */
+export function webhookVerifier(): Stripe {
+  return process.env.STRIPE_SECRET_KEY ? stripe() : new Stripe("sk_test_solo_para_firmas");
+}
+
 export async function createCheckout(
   order: Order,
   plan: Plan,

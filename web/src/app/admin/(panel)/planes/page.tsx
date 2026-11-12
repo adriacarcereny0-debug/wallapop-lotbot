@@ -19,6 +19,19 @@ function PlanForm({ plan }: { plan?: Plan }) {
         <label>Días de licencia (vacío = sin caducidad)<input name="duration_days" inputMode="numeric" defaultValue={plan?.duration_days ?? ""} /></label>
         <label>Ordenadores por licencia<input name="max_devices" inputMode="numeric" defaultValue={plan?.max_devices ?? 1} /></label>
         <label>Orden<input name="sort" inputMode="numeric" defaultValue={plan?.sort ?? 0} /></label>
+        <label>
+          Cobro con tarjeta (Stripe)
+          <select name="billing_interval" defaultValue={plan ? plan.billing_interval ?? "" : "month"}>
+            <option value="month">Suscripción mensual (se renueva sola)</option>
+            <option value="year">Suscripción anual (se renueva sola)</option>
+            <option value="">Pago único</option>
+          </select>
+        </label>
+        <label>
+          Precio de fundador (vacío = el normal)
+          <input name="founder_price" inputMode="decimal"
+            defaultValue={plan?.founder_price_cents != null ? String(plan.founder_price_cents / 100).replace(".", ",") : ""} />
+        </label>
       </div>
       <label>Descripción corta<input name="description" defaultValue={plan?.description} /></label>
       <label>Lo que incluye (una línea por punto)<textarea name="features" defaultValue={plan?.features.join("\n")} /></label>
@@ -38,13 +51,18 @@ export default async function PlansPage({ searchParams }: { searchParams: Promis
   return (
     <>
       <h1>Planes y precios</h1>
-      <p className="muted">Lo que ven los clientes en «Precios». Los cambios se ven en la web al momento.</p>
+      <p className="muted">
+        Lo que ven los clientes en «Precios». Los cambios se ven en la web al momento. Un cambio de precio vale para
+        las suscripciones nuevas; las que ya existen siguen con su precio.
+      </p>
       {examples && <div className="notice">Estos planes y precios son de EJEMPLO. Cámbialos por los tuyos (al guardar cualquiera desaparece este aviso).</div>}
       <Flash ok={ok} />
       {plans.map((plan) => (
         <details className="card" key={plan.id} style={{ margin: "14px 0" }}>
           <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-            {plan.name} · {formatMoney(plan.price_cents, plan.currency)} / {plan.period_label}{" "}
+            {plan.name} · {formatMoney(plan.price_cents, plan.currency)} / {plan.period_label}
+            {plan.founder_price_cents != null && ` · fundador ${formatMoney(plan.founder_price_cents, plan.currency)}`}
+            {plan.billing_interval ? " · suscripción" : " · pago único"}{" "}
             <span className={`badge ${plan.active ? "ok" : "off"}`}>{plan.active ? "visible" : "oculto"}</span>
           </summary>
           <div style={{ marginTop: 16 }}>

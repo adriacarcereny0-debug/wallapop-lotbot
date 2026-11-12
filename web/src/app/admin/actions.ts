@@ -6,10 +6,13 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { headers } from "next/headers";
+
 import { login, logout, requireAdmin } from "@/lib/auth";
+import { createPasswordToken } from "@/lib/customer-auth";
 import { db, logEvent, setSetting } from "@/lib/db";
 import { issueLicense, markOrderPaid, siteSettings, upsertCustomer } from "@/lib/store";
-import { cleanEmail, cleanText } from "@/lib/util";
+import { cleanEmail, cleanText, siteUrl } from "@/lib/util";
 
 export type FormState = { error?: string; ok?: string };
 
@@ -148,6 +151,31 @@ export async function setDeviceStatusAction(form: FormData): Promise<void> {
   back("/admin/dispositivos", rows.length ? `Dispositivo ${status}.` : undefined);
 }
 
+// --- Clientes ---------------------------------------------------------------
+export async function setFounderAction(form: FormData): Promise<void> {
+  await requireAdmin();
+  const sql = await db();
+  const founder = form.get("founder") === "1";
+  const rows = await sql<{ email: string }[]>`
+    UPDATE lotbot.customers SET founder = ${founder} WHERE id = ${num(form.get("id"))} RETURNING email
+  `;
+  if (rows.length) await logEvent(founder ? "Cliente fundador" : "Cliente ya no es fundador", rows[0].email, "admin");
+  back("/admin/clientes", founder ? "Marcado como fundador: pagará el precio de fundador al suscribirse." : "Ya no es fundador.");
+}
+
+/** Enlace de un solo uso (48 h) para que el cliente ponga o cambie su contraseña. */
+export async function passwordLinkAction(form: FormData): Promise<void> {
+  await requireAdmin();
+  const id = num(form.get("id"));
+  const sql = await db();
+  const [customer] = await sql<{ email: string }[]>`SELECT email FROM lotbot.customers WHERE id = ${id}`;
+  if (!customer) back("/admin/clientes");
+  const token = await createPasswordToken(id as number);
+  const link = `${siteUrl(await headers())}/cuenta/clave?token=${token}`;
+  await logEvent("Enlace de contraseña creado", customer.email, "admin");
+  back("/admin/clientes", `Enlace para ${customer.email} (vale 48 h, un solo uso): ${link}`);
+}
+
 // --- Pruebas gratis ---------------------------------------------------------
 export async function allowTrialAgainAction(form: FormData): Promise<void> {
   await requireAdmin();
@@ -181,6 +209,11 @@ export async function savePlanAction(form: FormData): Promise<void> {
     features: sql.json(
       String(form.get("features") ?? "").split("\n").map((f) => f.trim()).filter(Boolean).slice(0, 20),
     ),
+    billing_interval: ["month", "year"].includes(String(form.get("billing_interval"))) ? String(form.get("billing_interval")) : null,
+    founder_price_cents: (() => {
+      const founder = num(form.get("founder_price"));
+      return founder != null && founder >= 0 ? Math.round(founder * 100) : null;
+    })(),
     highlighted: form.get("highlighted") === "on",
     active: form.get("active") === "on",
     sort: Math.round(num(form.get("sort"), 0) ?? 0),
@@ -241,6 +274,7 @@ export async function saveSettingsAction(form: FormData): Promise<void> {
     email: cleanEmail(form.get("email")) ?? "",
     legal_name: cleanText(form.get("legal_name"), 120),
     privacy_text: String(form.get("privacy_text") ?? "").slice(0, 8000).trim(),
+    terms_text: String(form.get("terms_text") ?? "").slice(0, 12000).trim(),
     trial_hours: Math.max(1, Math.min(168, hours)),
     trial_enabled: form.get("trial_enabled") === "on",
   });

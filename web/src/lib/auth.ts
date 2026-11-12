@@ -52,7 +52,7 @@ export async function login(password: string): Promise<LoginResult> {
   const sql = await db();
   const [{ count }] = await sql<{ count: number }[]>`
     SELECT count(*)::int AS count FROM lotbot.login_attempts
-    WHERE ip_hash = ${ipHash} AND at > now() - make_interval(mins => ${LOCK_MINUTES})
+    WHERE ip_hash = ${ipHash} AND scope = 'admin' AND at > now() - make_interval(mins => ${LOCK_MINUTES})
   `;
   if (count >= MAX_FAILED_LOGINS) {
     return { ok: false, error: `Demasiados intentos. Espera ${LOCK_MINUTES} minutos.` };
@@ -64,7 +64,7 @@ export async function login(password: string): Promise<LoginResult> {
     await new Promise((resolve) => setTimeout(resolve, 600));
     return { ok: false, error: "Contraseña incorrecta." };
   }
-  await sql`DELETE FROM lotbot.login_attempts WHERE ip_hash = ${ipHash} OR at < now() - interval '1 day'`;
+  await sql`DELETE FROM lotbot.login_attempts WHERE (ip_hash = ${ipHash} AND scope = 'admin') OR at < now() - interval '1 day'`;
   const expires = String(Date.now() + SESSION_HOURS * 3600 * 1000);
   (await cookies()).set(COOKIE, `${expires}.${sign(expires)}`, {
     httpOnly: true,

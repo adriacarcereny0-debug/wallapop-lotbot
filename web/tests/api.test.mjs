@@ -98,9 +98,10 @@ test("sin formas de pago listas no se puede comprar; con Bizum, sí", async () =
   const page = await (await fetch(`${BASE}${order.data.redirect}`)).text();
   assert.match(page, new RegExp(`concepto ${order.data.reference}`));
   assert.match(page, /Pedido pendiente de pago/);
-  // Sin claves de Stripe, la tarjeta no se ofrece.
+  // Sin claves de Stripe, la tarjeta no se ofrece. Con claves falsas (servidor
+  // de pruebas con STRIPE_WEBHOOK_SECRET) se intenta y Stripe no contesta: 502.
   const card = await post("/api/checkout", { plan: "mensual", method: "tarjeta", email: `c.${run}@ejemplo.com`, accept: true });
-  assert.equal(card.status, 400);
+  assert.equal(card.status, process.env.STRIPE_WEBHOOK_SECRET ? 502 : 400, JSON.stringify(card.data));
 });
 
 test("un plan que no existe no se puede comprar", async () => {

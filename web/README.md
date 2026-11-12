@@ -26,7 +26,7 @@ Postgres. Las tablas se crean solas la primera vez.
    | `ADMIN_PASSWORD` | La contraseña de /admin (mínimo 8 caracteres; mejor 16 o más). |
    | `SESSION_SECRET` | Un texto largo y aleatorio (p. ej. 40 letras y números al azar). |
    | `SITE_URL` | La dirección de la web, p. ej. `https://lotbot.es` (sin `/` al final). |
-   | `STRIPE_SECRET_KEY` | *(Opcional, para tarjeta)* clave secreta de Stripe (`sk_live_…`). |
+   | `STRIPE_SECRET_KEY` | *(Para tarjeta y suscripciones)* clave secreta de Stripe (`sk_live_…`). |
    | `STRIPE_WEBHOOK_SECRET` | *(Opcional, para tarjeta)* secreto del webhook (`whsec_…`). |
 5. **Deploy.** Pulsa *Redeploy* para que use las variables. Comprueba
    `https://tu-web/api/health`: debe decir base de datos «conectada» y firma
@@ -39,13 +39,59 @@ Postgres. Las tablas se crean solas la primera vez.
      `{referencia}`.
    - **Ajustes:** tu nombre o empresa, email, WhatsApp y la prueba gratis.
 
-### Pago con tarjeta (Stripe), opcional
+### Suscripciones con tarjeta (Stripe)
 
-1. Crea una cuenta en stripe.com y copia la clave secreta en `STRIPE_SECRET_KEY`.
-2. En Stripe → *Developers → Webhooks → Add endpoint*:
-   `https://tu-web/api/stripe/webhook`, evento `checkout.session.completed`.
-   Copia el *Signing secret* en `STRIPE_WEBHOOK_SECRET`.
-3. *Redeploy*. La tarjeta aparece sola y las licencias se crean al pagar.
+Los planes mensual y anual se cobran como **suscripción**: se renuevan solos y
+el cliente cambia la tarjeta, ve sus facturas o cancela desde **Mi cuenta**
+(portal de Stripe). No hace falta crear productos ni precios en Stripe: se
+crean solos con el precio de cada plan de **/admin → Planes**.
+
+1. Crea la cuenta en stripe.com (empieza en **modo de prueba**).
+2. Copia la clave secreta (*Developers → API keys*, `sk_test_…` o `sk_live_…`)
+   en `STRIPE_SECRET_KEY`.
+3. *Developers → Webhooks → Add endpoint*: `https://www.lotbot.es/api/stripe/webhook`
+   con estos eventos:
+   `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+   `customer.subscription.created`, `customer.subscription.updated`,
+   `customer.subscription.deleted`, `customer.subscription.paused`,
+   `customer.subscription.resumed`.
+   Copia el *Signing secret* (`whsec_…`) en `STRIPE_WEBHOOK_SECRET`.
+4. *Settings → Billing → Customer portal*: activa «cambiar método de pago»,
+   «ver facturas» y «cancelar suscripción» (al final del periodo).
+5. *Settings → Billing → Subscriptions and emails → Manage failed payments*:
+   reintentos durante unos días y, al acabar, «marcar como impagada» (unpaid).
+6. IVA: activa *Stripe Tax* o pon el precio con IVA incluido en tus planes.
+7. *Redeploy*.
+
+Qué pasa con la licencia (lo aplica la web sola con los avisos de Stripe):
+
+| En Stripe | Licencia |
+|---|---|
+| Activa / en prueba | Vale hasta el fin del periodo pagado **+ 5 días** de margen |
+| Pago fallido (*past_due*) | Sigue funcionando hasta fin de periodo + 5 días |
+| Cancelada al final del periodo | Vale hasta el fin del periodo (sin margen) |
+| Cancelada / caducada | Termina |
+| Impagada (*unpaid*) / en pausa | Suspendida «Impago (Stripe)»; al pagar vuelve sola |
+
+- El cliente conserva **siempre la misma clave**: al suscribirse se aprovecha
+  la de su prueba gratis o la de una suscripción anterior.
+- Una suspensión o revocación hecha a mano en /admin no la deshace Stripe.
+- **Precio de fundador**: en /admin → Planes pon el «Precio de fundador» y en
+  /admin → Clientes marca a cada cliente actual como «Fundador».
+- El margen se cambia con `BILLING_GRACE_DAYS` (por defecto 5).
+
+### Cuentas de cliente (/cuenta)
+
+El cliente entra con email y contraseña (guardada con scrypt; sesión firmada
+con `SESSION_SECRET`, que es obligatorio). Ve su licencia, sus ordenadores
+(puede desvincular uno, hasta 3 veces al mes) y su suscripción.
+
+- Quien paga sin tener cuenta pone su contraseña al volver del pago.
+- Un cliente de antes (prueba o compra) crea su cuenta con su email **y una de
+  sus claves de licencia**, para que nadie se quede con la cuenta de otro.
+- Si un email ya es cliente, el pago con tarjeta se hace desde Mi cuenta.
+- No hay envío de emails: para recuperar la contraseña, en /admin → Clientes
+  pulsa «Enlace de contraseña» (un solo uso, 48 h) y envíaselo.
 
 Sin Stripe, la tarjeta no se ofrece y los pagos (Bizum, transferencia,
 PayPal) se confirman a mano en **/admin → Pedidos → «Marcar pagado»**, que
@@ -103,7 +149,9 @@ npm run dev                  # http://localhost:3000
 Pruebas de la API (contra la web en marcha y una base de datos de pruebas):
 
 ```bash
-BASE_URL=http://localhost:3000 DATABASE_URL=postgres://… npm test
+# La web de pruebas debe arrancar con STRIPE_WEBHOOK_SECRET=whsec_pruebas_lotbot
+# (y STRIPE_SECRET_KEY=sk_test_falsa): las pruebas mandan avisos de Stripe firmados.
+BASE_URL=http://localhost:3000 DATABASE_URL=postgres://… STRIPE_WEBHOOK_SECRET=whsec_pruebas_lotbot npm test
 ```
 
 ## Seguridad

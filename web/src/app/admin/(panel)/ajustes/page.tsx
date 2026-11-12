@@ -30,6 +30,11 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           Texto propio (vacío = se usa uno básico con tus datos)
           <textarea name="privacy_text" defaultValue={s.privacy_text} style={{ minHeight: 180 }} />
         </label>
+        <h2 style={{ margin: "10px 0 0" }}>Términos de uso y licencia</h2>
+        <label>
+          Texto propio (vacío = se usa uno básico; revísalo con tu asesor)
+          <textarea name="terms_text" defaultValue={s.terms_text} style={{ minHeight: 180 }} />
+        </label>
         <div><button className="btn primary">Guardar ajustes</button></div>
       </form>
     </>

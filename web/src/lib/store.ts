@@ -19,6 +19,10 @@ export type Plan = {
   highlighted: boolean;
   active: boolean;
   sort: number;
+  /** Suscripción: cada mes o cada año (null = pago único). */
+  billing_interval: "month" | "year" | null;
+  /** Precio para clientes fundadores (null = el normal). */
+  founder_price_cents: number | null;
 };
 
 export type PaymentMethod = {
@@ -35,6 +39,7 @@ export type SiteSettings = {
   email: string;
   legal_name: string;
   privacy_text: string;
+  terms_text: string;
   trial_hours: number;
   trial_enabled: boolean;
 };
@@ -45,6 +50,7 @@ export const DEFAULT_SETTINGS: SiteSettings = {
   email: "",
   legal_name: "",
   privacy_text: "",
+  terms_text: "",
   trial_hours: 24,
   trial_enabled: true,
 };

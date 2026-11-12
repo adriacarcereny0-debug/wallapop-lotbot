@@ -28,6 +28,7 @@ export default async function SiteLayout({ children }: { children: React.ReactNo
           <nav className="nav">
             <Link href="/#funciones" className="hide-sm">Funciones</Link>
             <Link href="/#precios">Precios</Link>
+            <Link href="/cuenta">Mi cuenta</Link>
             <Link href="/prueba" className="btn primary small">Prueba gratis</Link>
           </nav>
         </div>
@@ -39,6 +40,7 @@ export default async function SiteLayout({ children }: { children: React.ReactNo
           {settings.email && <a href={`mailto:${settings.email}`}>{settings.email}</a>}
           {whatsapp && <a href={`https://wa.me/${whatsapp}`}>WhatsApp</a>}
           <Link href="/privacidad">Privacidad</Link>
+          <Link href="/terminos">Términos</Link>
           <span>LOT Bot no está afiliado a Wallapop.</span>
         </div>
       </footer>

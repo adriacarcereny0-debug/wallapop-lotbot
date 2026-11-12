@@ -221,6 +221,79 @@ const MIGRATIONS: { version: number; name: string; sql: string }[] = [
     ALTER TABLE lotbot.license_events ENABLE ROW LEVEL SECURITY;
     `,
   },
+  {
+    version: 3,
+    name: "suscripciones de Stripe y cuentas de cliente",
+    sql: `
+    -- Cuenta de cliente (/cuenta): contraseña (scrypt), sesiones que se
+    -- pueden cerrar todas a la vez y cliente de Stripe.
+    ALTER TABLE lotbot.customers ADD COLUMN IF NOT EXISTS password_hash text;
+    ALTER TABLE lotbot.customers ADD COLUMN IF NOT EXISTS session_version integer NOT NULL DEFAULT 1;
+    ALTER TABLE lotbot.customers ADD COLUMN IF NOT EXISTS stripe_customer_id text;
+    ALTER TABLE lotbot.customers ADD COLUMN IF NOT EXISTS founder boolean NOT NULL DEFAULT false;
+    CREATE UNIQUE INDEX IF NOT EXISTS customers_stripe ON lotbot.customers (stripe_customer_id)
+      WHERE stripe_customer_id IS NOT NULL;
+
+    -- Planes: cada cuánto se cobra y precio de fundador (clientes de antes).
+    ALTER TABLE lotbot.plans ADD COLUMN IF NOT EXISTS billing_interval text;
+    ALTER TABLE lotbot.plans DROP CONSTRAINT IF EXISTS plans_billing_interval_check;
+    ALTER TABLE lotbot.plans ADD CONSTRAINT plans_billing_interval_check
+      CHECK (billing_interval IS NULL OR billing_interval IN ('month', 'year'));
+    ALTER TABLE lotbot.plans ADD COLUMN IF NOT EXISTS founder_price_cents integer;
+    ALTER TABLE lotbot.plans DROP CONSTRAINT IF EXISTS plans_founder_price_check;
+    ALTER TABLE lotbot.plans ADD CONSTRAINT plans_founder_price_check
+      CHECK (founder_price_cents IS NULL OR founder_price_cents >= 0);
+    UPDATE lotbot.plans SET billing_interval = CASE
+        WHEN slug = 'anual' OR lower(period_label) IN ('año', 'ano', 'year') THEN 'year'
+        WHEN slug = 'mensual' OR lower(period_label) IN ('mes', 'month') THEN 'month'
+      END
+      WHERE billing_interval IS NULL;
+
+    -- Intentos de entrada: los de /admin y los de /cuenta se cuentan aparte.
+    ALTER TABLE lotbot.login_attempts ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'admin';
+
+    CREATE TABLE IF NOT EXISTS lotbot.subscriptions (
+      id serial PRIMARY KEY,
+      stripe_subscription_id text UNIQUE NOT NULL,
+      stripe_customer_id text NOT NULL DEFAULT '',
+      customer_id integer REFERENCES lotbot.customers(id) ON DELETE SET NULL,
+      license_id integer REFERENCES lotbot.licenses(id) ON DELETE SET NULL,
+      plan_id integer REFERENCES lotbot.plans(id) ON DELETE SET NULL,
+      status text NOT NULL,
+      current_period_end timestamptz,
+      cancel_at timestamptz,
+      cancel_at_period_end boolean NOT NULL DEFAULT false,
+      ended_at timestamptz,
+      amount_cents integer,
+      currency text NOT NULL DEFAULT 'EUR',
+      last_event_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS subscriptions_customer ON lotbot.subscriptions (customer_id);
+    CREATE INDEX IF NOT EXISTS subscriptions_license ON lotbot.subscriptions (license_id);
+
+    -- Avisos de Stripe ya procesados (Stripe puede repetirlos).
+    CREATE TABLE IF NOT EXISTS lotbot.stripe_events (
+      id text PRIMARY KEY,
+      type text NOT NULL,
+      received_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    -- Enlaces de un solo uso para poner o cambiar la contraseña.
+    CREATE TABLE IF NOT EXISTS lotbot.password_tokens (
+      token_hash text PRIMARY KEY,
+      customer_id integer NOT NULL REFERENCES lotbot.customers(id) ON DELETE CASCADE,
+      expires_at timestamptz NOT NULL,
+      used_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    ALTER TABLE lotbot.subscriptions ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE lotbot.stripe_events ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE lotbot.password_tokens ENABLE ROW LEVEL SECURITY;
+    `,
+  },
 ];
 
 /** Número de bloqueo para las migraciones (cualquiera fijo). */
@@ -267,12 +340,12 @@ async function seed(sql: Sql): Promise<void> {
       INSERT INTO lotbot.plans ${sql([
         {
           slug: "mensual", name: "Mensual", description: "Suscripción mes a mes, sin permanencia.",
-          price_cents: 2900, period_label: "mes", duration_days: 30, max_devices: 1,
+          price_cents: 2900, period_label: "mes", duration_days: 30, max_devices: 1, billing_interval: "month",
           features: sql.json([...base, "1 ordenador"]), highlighted: false, sort: 1,
         },
         {
           slug: "anual", name: "Anual", description: "Un año completo al mejor precio.",
-          price_cents: 24900, period_label: "año", duration_days: 365, max_devices: 2,
+          price_cents: 24900, period_label: "año", duration_days: 365, max_devices: 2, billing_interval: "year",
           features: sql.json([...base, "Hasta 2 ordenadores"]), highlighted: true, sort: 2,
         },
       ])}

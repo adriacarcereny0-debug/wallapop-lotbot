@@ -10,7 +10,7 @@ type Props = {
 };
 
 const HINTS: Record<string, string> = {
-  tarjeta: "Pago seguro en la página de Stripe. Tu licencia se activa al momento.",
+  tarjeta: "Pago seguro en la página de Stripe. Se renueva sola y la cancelas cuando quieras desde «Mi cuenta». Tu licencia se activa al momento.",
   bizum: "Te damos los datos y la referencia; activamos tu licencia al recibirlo.",
   transferencia: "Te damos la cuenta y la referencia; activamos tu licencia al recibirla.",
   paypal: "Te damos el enlace de PayPal; activamos tu licencia al recibirlo.",
@@ -19,6 +19,7 @@ const HINTS: Record<string, string> = {
 export default function CheckoutForm({ plans, plan, methods }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [accountLink, setAccountLink] = useState("");
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -41,6 +42,7 @@ export default function CheckoutForm({ plans, plan, methods }: Props) {
       const data = await response.json();
       if (!data.ok) {
         setError(data.error || "No se ha podido crear el pedido.");
+        setAccountLink(data.redirect || "");
         setBusy(false);
         return;
       }
@@ -94,7 +96,11 @@ export default function CheckoutForm({ plans, plan, methods }: Props) {
           Acepto la <Link href="/privacidad">política de privacidad</Link>.
         </span>
       </label>
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <p className="error">
+          {error} {accountLink && <Link href={accountLink}>Ir a Mi cuenta</Link>}
+        </p>
+      )}
       <button className="btn primary" disabled={busy}>{busy ? "Un momento…" : "Continuar con el pago"}</button>
     </form>
   );
