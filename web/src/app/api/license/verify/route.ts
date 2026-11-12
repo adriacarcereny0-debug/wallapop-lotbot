@@ -4,6 +4,8 @@ import { verifyLicense } from "@/lib/store";
 import { cleanText } from "@/lib/util";
 
 export const dynamic = "force-dynamic";
+// Firma Ed25519 y Postgres: necesitan Node.js (no el entorno «edge»).
+export const runtime = "nodejs";
 
 /**
  * Para LOT Bot (escritorio): ¿es válida esta licencia en este ordenador?

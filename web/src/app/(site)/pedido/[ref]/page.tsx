@@ -23,7 +23,7 @@ export default async function OrderPage({
   if (!order) notFound();
   const sql = await db();
   const [method] = await sql<{ name: string; instructions: string }[]>`
-    SELECT name, instructions FROM payment_methods WHERE id = ${order.method}
+    SELECT name, instructions FROM lotbot.payment_methods WHERE id = ${order.method}
   `;
   const settings = await siteSettings();
   const whatsapp = settings.whatsapp.replace(/[^\d]/g, "");

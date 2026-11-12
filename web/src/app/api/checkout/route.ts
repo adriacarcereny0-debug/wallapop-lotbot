@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     try {
       const checkout = await createCheckout(order, plan, email, siteUrl(request.headers));
       const sql = await db();
-      await sql`UPDATE orders SET stripe_session_id = ${checkout.id} WHERE id = ${order.id}`;
+      await sql`UPDATE lotbot.orders SET stripe_session_id = ${checkout.id} WHERE id = ${order.id}`;
       return NextResponse.json({ ok: true, reference: order.reference, redirect: checkout.url });
     } catch (error) {
       console.error("Stripe:", error);

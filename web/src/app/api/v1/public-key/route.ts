@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { currentKeyId, publicKeyBase64 } from "@/lib/signing";
 
 export const dynamic = "force-dynamic";
+// Firma Ed25519 y Postgres: necesitan Node.js (no el entorno «edge»).
+export const runtime = "nodejs";
 
 /** Clave PÚBLICA con la que LOT Bot comprueba los pases (no es secreta). */
 export async function GET() {

@@ -101,7 +101,7 @@ function fail(code: ErrorCode, message: string, license?: LicenseInfo): LeaseRes
 async function record(licenseId: number | null, kind: string, fingerprint = "", ipHash = "", detail = "") {
   const sql = await db();
   await sql`
-    INSERT INTO license_events (license_id, kind, fingerprint, ip_hash, detail)
+    INSERT INTO lotbot.license_events (license_id, kind, fingerprint, ip_hash, detail)
     VALUES (${licenseId}, ${kind}, ${fingerprint}, ${ipHash}, ${detail.slice(0, 500)})
   `;
 }
@@ -109,7 +109,7 @@ async function record(licenseId: number | null, kind: string, fingerprint = "", 
 async function tooManyFailures(ipHash: string): Promise<boolean> {
   const sql = await db();
   const [{ count }] = await sql<{ count: number }[]>`
-    SELECT count(*)::int AS count FROM license_events
+    SELECT count(*)::int AS count FROM lotbot.license_events
     WHERE ip_hash = ${ipHash} AND kind = 'clave_inexistente' AND at > now() - interval '1 hour'
   `;
   return count >= MAX_FAILED_PER_HOUR;
@@ -119,7 +119,7 @@ async function findLicense(key: string): Promise<LicenseRow | null> {
   const sql = await db();
   const rows = await sql<LicenseRow[]>`
     SELECT l.id, l.key, l.kind, l.status, l.status_reason, l.expires_at, l.max_devices, p.slug AS plan_slug
-    FROM licenses l LEFT JOIN plans p ON p.id = l.plan_id
+    FROM lotbot.licenses l LEFT JOIN lotbot.plans p ON p.id = l.plan_id
     WHERE l.key = ${key}
   `;
   return rows[0] ?? null;
@@ -128,7 +128,7 @@ async function findLicense(key: string): Promise<LicenseRow | null> {
 async function info(license: LicenseRow): Promise<LicenseInfo> {
   const sql = await db();
   const [{ count }] = await sql<{ count: number }[]>`
-    SELECT count(*)::int AS count FROM devices WHERE license_id = ${license.id} AND status = 'activo'
+    SELECT count(*)::int AS count FROM lotbot.devices WHERE license_id = ${license.id} AND status = 'activo'
   `;
   return {
     kind: license.kind,
@@ -216,16 +216,16 @@ export async function activate(rawKey: string, device: DeviceInput, ipHash: stri
   }
   const result = await sql.begin(async (tx) => {
     // Bloqueo de la licencia: dos activaciones a la vez no se saltan el límite.
-    await tx`SELECT id FROM licenses WHERE id = ${license.id} FOR UPDATE`;
+    await tx`SELECT id FROM lotbot.licenses WHERE id = ${license.id} FOR UPDATE`;
     const [existing] = await tx<{ id: number; status: string }[]>`
-      SELECT id, status FROM devices WHERE license_id = ${license.id} AND fingerprint = ${device.fingerprint}
+      SELECT id, status FROM lotbot.devices WHERE license_id = ${license.id} AND fingerprint = ${device.fingerprint}
     `;
     if (existing?.status === "bloqueado") {
       return fail("DEVICE_BLOCKED", "Este ordenador está bloqueado para esta licencia. Contacta con soporte.");
     }
     if (license.kind === "prueba") {
       const other = await tx`
-        SELECT 1 FROM devices d JOIN licenses l ON l.id = d.license_id
+        SELECT 1 FROM lotbot.devices d JOIN lotbot.licenses l ON l.id = d.license_id
         WHERE d.fingerprint = ${device.fingerprint} AND l.kind = 'prueba' AND l.id <> ${license.id}
         LIMIT 1
       `;
@@ -235,7 +235,7 @@ export async function activate(rawKey: string, device: DeviceInput, ipHash: stri
     }
     if (existing?.status !== "activo") {
       const [{ count }] = await tx<{ count: number }[]>`
-        SELECT count(*)::int AS count FROM devices WHERE license_id = ${license.id} AND status = 'activo'
+        SELECT count(*)::int AS count FROM lotbot.devices WHERE license_id = ${license.id} AND status = 'activo'
       `;
       if (count >= license.max_devices) {
         return fail(
@@ -246,7 +246,7 @@ export async function activate(rawKey: string, device: DeviceInput, ipHash: stri
         );
       }
       const [{ today }] = await tx<{ today: number }[]>`
-        SELECT count(*)::int AS today FROM license_events
+        SELECT count(*)::int AS today FROM lotbot.license_events
         WHERE license_id = ${license.id} AND kind = 'activacion' AND at > now() - interval '1 day'
       `;
       if (today >= MAX_ACTIVATIONS_PER_DAY) {
@@ -254,7 +254,7 @@ export async function activate(rawKey: string, device: DeviceInput, ipHash: stri
       }
     }
     await tx`
-      INSERT INTO devices (license_id, fingerprint, name, os, app_version, last_ip_hash, status)
+      INSERT INTO lotbot.devices (license_id, fingerprint, name, os, app_version, last_ip_hash, status)
       VALUES (${license.id}, ${device.fingerprint}, ${(device.name ?? "").slice(0, 80)},
               ${(device.os ?? "").slice(0, 60)}, ${(device.appVersion ?? "").slice(0, 30)}, ${ipHash}, 'activo')
       ON CONFLICT (license_id, fingerprint) DO UPDATE SET
@@ -265,7 +265,7 @@ export async function activate(rawKey: string, device: DeviceInput, ipHash: stri
     `;
     if (existing?.status !== "activo") {
       await tx`
-        INSERT INTO license_events (license_id, kind, fingerprint, ip_hash, detail)
+        INSERT INTO lotbot.license_events (license_id, kind, fingerprint, ip_hash, detail)
         VALUES (${license.id}, 'activacion', ${device.fingerprint}, ${ipHash}, ${(device.name ?? "").slice(0, 80)})
       `;
     }
@@ -283,7 +283,7 @@ export async function refresh(rawKey: string, device: DeviceInput, ipHash: strin
   const sql = await db();
   const details = await info(license);
   const [existing] = await sql<{ status: string }[]>`
-    SELECT status FROM devices WHERE license_id = ${license.id} AND fingerprint = ${device.fingerprint}
+    SELECT status FROM lotbot.devices WHERE license_id = ${license.id} AND fingerprint = ${device.fingerprint}
   `;
   if (existing?.status === "bloqueado") {
     return fail("DEVICE_BLOCKED", "Este ordenador está bloqueado para esta licencia. Contacta con soporte.", details);
@@ -294,7 +294,7 @@ export async function refresh(rawKey: string, device: DeviceInput, ipHash: strin
   const problem = unusable(license, details);
   if (problem) return problem;
   await sql`
-    UPDATE devices SET last_seen = now(), last_ip_hash = ${ipHash},
+    UPDATE lotbot.devices SET last_seen = now(), last_ip_hash = ${ipHash},
       app_version = CASE WHEN ${device.appVersion ?? ""} <> '' THEN ${device.appVersion ?? ""} ELSE app_version END
     WHERE license_id = ${license.id} AND fingerprint = ${device.fingerprint}
   `;
@@ -313,7 +313,7 @@ export async function deactivate(rawKey: string, fingerprint: string, ipHash: st
   const license = checked.license;
   const sql = await db();
   const [{ count }] = await sql<{ count: number }[]>`
-    SELECT count(*)::int AS count FROM license_events
+    SELECT count(*)::int AS count FROM lotbot.license_events
     WHERE license_id = ${license.id} AND kind = 'desvinculado_por_cliente' AND at > now() - interval '30 days'
   `;
   if (count >= MAX_SELF_DEACTIVATIONS_PER_MONTH) {
@@ -324,7 +324,7 @@ export async function deactivate(rawKey: string, fingerprint: string, ipHash: st
     };
   }
   const rows = await sql`
-    UPDATE devices SET status = 'desvinculado'
+    UPDATE lotbot.devices SET status = 'desvinculado'
     WHERE license_id = ${license.id} AND fingerprint = ${fingerprint} AND status = 'activo'
     RETURNING id
   `;

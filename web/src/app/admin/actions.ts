@@ -50,7 +50,7 @@ export async function cancelOrderAction(form: FormData): Promise<void> {
   const id = num(form.get("id"));
   const sql = await db();
   const rows = await sql<{ reference: string }[]>`
-    UPDATE orders SET status = 'cancelado' WHERE id = ${id} AND status = 'pendiente' RETURNING reference
+    UPDATE lotbot.orders SET status = 'cancelado' WHERE id = ${id} AND status = 'pendiente' RETURNING reference
   `;
   if (rows.length) await logEvent("Pedido cancelado", rows[0].reference, "admin");
   back("/admin/pedidos", "Pedido cancelado.");
@@ -59,7 +59,7 @@ export async function cancelOrderAction(form: FormData): Promise<void> {
 export async function orderNotesAction(form: FormData): Promise<void> {
   await requireAdmin();
   const sql = await db();
-  await sql`UPDATE orders SET notes = ${cleanText(form.get("notes"), 500)} WHERE id = ${num(form.get("id"))}`;
+  await sql`UPDATE lotbot.orders SET notes = ${cleanText(form.get("notes"), 500)} WHERE id = ${num(form.get("id"))}`;
   back("/admin/pedidos", "Nota guardada.");
 }
 
@@ -71,7 +71,7 @@ export async function createLicenseAction(form: FormData): Promise<void> {
   const sql = await db();
   const planId = num(form.get("plan_id"));
   const [plan] = planId ? await sql<{ duration_days: number | null; max_devices: number }[]>`
-    SELECT duration_days, max_devices FROM plans WHERE id = ${planId}` : [];
+    SELECT duration_days, max_devices FROM lotbot.plans WHERE id = ${planId}` : [];
   const days = num(form.get("days"), plan ? plan.duration_days : null);
   const customerId = await upsertCustomer(email, cleanText(form.get("name"), 120), cleanText(form.get("phone"), 40));
   const license = await issueLicense({
@@ -92,7 +92,7 @@ export async function extendLicenseAction(form: FormData): Promise<void> {
   const days = Math.round(num(form.get("days"), 30) ?? 30);
   const sql = await db();
   const rows = await sql<{ key: string }[]>`
-    UPDATE licenses SET
+    UPDATE lotbot.licenses SET
       expires_at = GREATEST(COALESCE(expires_at, now()), now()) + make_interval(days => ${days}),
       status = 'activa'
     WHERE id = ${id} RETURNING key
@@ -109,7 +109,7 @@ export async function setLicenseStatusAction(form: FormData): Promise<void> {
   const reason = status === "activa" ? "" : cleanText(form.get("reason"), 200);
   const sql = await db();
   const rows = await sql<{ key: string }[]>`
-    UPDATE licenses SET status = ${status}, status_reason = ${reason}, updated_at = now()
+    UPDATE lotbot.licenses SET status = ${status}, status_reason = ${reason}, updated_at = now()
     WHERE id = ${num(form.get("id"))} RETURNING key
   `;
   if (rows.length) {
@@ -126,7 +126,7 @@ export async function resetDevicesAction(form: FormData): Promise<void> {
   await requireAdmin();
   const sql = await db();
   const id = num(form.get("id"));
-  await sql`UPDATE devices SET status = 'desvinculado' WHERE license_id = ${id} AND status = 'activo'`;
+  await sql`UPDATE lotbot.devices SET status = 'desvinculado' WHERE license_id = ${id} AND status = 'activo'`;
   await logEvent("Ordenadores de la licencia desvinculados", String(id), "admin");
   back("/admin/licencias", "Ordenadores desvinculados: podrá activarse en uno nuevo.");
 }
@@ -138,7 +138,7 @@ export async function setDeviceStatusAction(form: FormData): Promise<void> {
   if (!["activo", "desvinculado", "bloqueado"].includes(status)) back("/admin/dispositivos");
   const sql = await db();
   const rows = await sql<{ fingerprint: string; key: string }[]>`
-    UPDATE devices d SET status = ${status} FROM licenses l
+    UPDATE lotbot.devices d SET status = ${status} FROM lotbot.licenses l
     WHERE d.id = ${num(form.get("id"))} AND l.id = d.license_id
     RETURNING d.fingerprint, l.key
   `;
@@ -153,7 +153,7 @@ export async function allowTrialAgainAction(form: FormData): Promise<void> {
   await requireAdmin();
   const sql = await db();
   const rows = await sql<{ email_normalized: string }[]>`
-    DELETE FROM trials WHERE id = ${num(form.get("id"))} RETURNING email_normalized
+    DELETE FROM lotbot.trials WHERE id = ${num(form.get("id"))} RETURNING email_normalized
   `;
   if (rows.length) await logEvent("Prueba gratis permitida otra vez", rows[0].email_normalized, "admin");
   back("/admin/pruebas", "Ese email (y ese ordenador) pueden volver a pedir la prueba.");
@@ -187,9 +187,9 @@ export async function savePlanAction(form: FormData): Promise<void> {
   };
   try {
     if (id) {
-      await sql`UPDATE plans SET ${sql(values)} WHERE id = ${id}`;
+      await sql`UPDATE lotbot.plans SET ${sql(values)} WHERE id = ${id}`;
     } else {
-      await sql`INSERT INTO plans ${sql(values)}`;
+      await sql`INSERT INTO lotbot.plans ${sql(values)}`;
     }
   } catch {
     back("/admin/planes", "⚠ Ya hay otro plan con ese identificador.");
@@ -203,12 +203,12 @@ export async function deletePlanAction(form: FormData): Promise<void> {
   await requireAdmin();
   const sql = await db();
   const id = num(form.get("id"));
-  const used = await sql`SELECT 1 FROM orders WHERE plan_id = ${id} LIMIT 1`;
+  const used = await sql`SELECT 1 FROM lotbot.orders WHERE plan_id = ${id} LIMIT 1`;
   if (used.length) {
-    await sql`UPDATE plans SET active = false WHERE id = ${id}`;
+    await sql`UPDATE lotbot.plans SET active = false WHERE id = ${id}`;
     back("/admin/planes", "Ese plan tiene pedidos: se ha desactivado en vez de borrarlo.");
   }
-  await sql`DELETE FROM plans WHERE id = ${id}`;
+  await sql`DELETE FROM lotbot.plans WHERE id = ${id}`;
   await logEvent("Plan borrado", String(id), "admin");
   back("/admin/planes", "Plan borrado.");
 }
@@ -219,7 +219,7 @@ export async function savePaymentMethodAction(form: FormData): Promise<void> {
   const sql = await db();
   const id = cleanText(form.get("id"), 40);
   await sql`
-    UPDATE payment_methods SET
+    UPDATE lotbot.payment_methods SET
       enabled = ${form.get("enabled") === "on"},
       name = ${cleanText(form.get("name"), 60) || id},
       instructions = ${String(form.get("instructions") ?? "").slice(0, 2000).trim()}

@@ -4,6 +4,8 @@ import { invalidRequest, parseLicenseRequest } from "@/lib/api";
 import { HTTP_STATUS, deactivate } from "@/lib/licensing";
 
 export const dynamic = "force-dynamic";
+// Firma Ed25519 y Postgres: necesitan Node.js (no el entorno «edge»).
+export const runtime = "nodejs";
 
 /** El cliente libera este ordenador para usar la licencia en otro. */
 export async function POST(request: Request) {

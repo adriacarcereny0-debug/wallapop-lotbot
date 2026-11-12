@@ -78,17 +78,17 @@ test("la licencia se comprueba y se limita a sus ordenadores", async () => {
 
 test("una prueba caducada ya no vale", async () => {
   const { data } = await post("/api/trial", { email: `caduca.${run}@ejemplo.com`, accept: true });
-  await sql`UPDATE licenses SET expires_at = now() - interval '1 minute' WHERE key = ${data.key}`;
+  await sql`UPDATE lotbot.licenses SET expires_at = now() - interval '1 minute' WHERE key = ${data.key}`;
   const result = await post("/api/license/verify", { key: data.key, deviceId: "x" });
   assert.equal(result.data.valid, false);
   assert.match(result.data.reason, /terminado/);
 });
 
 test("sin formas de pago listas no se puede comprar; con Bizum, sí", async () => {
-  await sql`UPDATE payment_methods SET enabled = false, instructions = '' WHERE id <> 'tarjeta'`;
+  await sql`UPDATE lotbot.payment_methods SET enabled = false, instructions = '' WHERE id <> 'tarjeta'`;
   const none = await post("/api/checkout", { plan: "mensual", method: "bizum", email: `c.${run}@ejemplo.com`, accept: true });
   assert.equal(none.status, 400);
-  await sql`UPDATE payment_methods SET enabled = true,
+  await sql`UPDATE lotbot.payment_methods SET enabled = true,
     instructions = 'Bizum de {importe} al 600000000 con el concepto {referencia}' WHERE id = 'bizum'`;
   const order = await post("/api/checkout", {
     plan: "mensual", method: "bizum", email: `c.${run}@ejemplo.com`, name: "Carla", accept: true,

@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export default async function LogPage() {
   const sql = await db();
   const events = await sql<{ id: number; at: Date; actor: string; action: string; detail: string }[]>`
-    SELECT * FROM events ORDER BY id DESC LIMIT 500
+    SELECT * FROM lotbot.events ORDER BY id DESC LIMIT 500
   `;
   return (
     <>

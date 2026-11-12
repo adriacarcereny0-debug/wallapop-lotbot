@@ -14,12 +14,12 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const like = `%${q.trim().toLowerCase()}%`;
   const rows = await sql<Row[]>`
     SELECT c.*,
-      COALESCE((SELECT sum(amount_cents) FROM orders o WHERE o.customer_id = c.id AND o.status = 'pagado'), 0)::int AS paid_cents,
-      (SELECT count(*)::int FROM orders o WHERE o.customer_id = c.id) AS orders,
-      EXISTS (SELECT 1 FROM licenses l WHERE l.customer_id = c.id AND l.kind <> 'prueba' AND l.status = 'activa'
+      COALESCE((SELECT sum(amount_cents) FROM lotbot.orders o WHERE o.customer_id = c.id AND o.status = 'pagado'), 0)::int AS paid_cents,
+      (SELECT count(*)::int FROM lotbot.orders o WHERE o.customer_id = c.id) AS orders,
+      EXISTS (SELECT 1 FROM lotbot.licenses l WHERE l.customer_id = c.id AND l.kind <> 'prueba' AND l.status = 'activa'
               AND (l.expires_at IS NULL OR l.expires_at > now())) AS active_license,
-      EXISTS (SELECT 1 FROM licenses l WHERE l.customer_id = c.id AND l.kind = 'prueba') AS trial
-    FROM customers c
+      EXISTS (SELECT 1 FROM lotbot.licenses l WHERE l.customer_id = c.id AND l.kind = 'prueba') AS trial
+    FROM lotbot.customers c
     WHERE (${q.trim()} = '' OR lower(c.email) LIKE ${like} OR lower(c.name) LIKE ${like} OR c.phone LIKE ${like})
     ORDER BY c.id DESC LIMIT 300
   `;

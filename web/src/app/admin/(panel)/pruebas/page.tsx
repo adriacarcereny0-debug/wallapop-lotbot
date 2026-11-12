@@ -18,10 +18,10 @@ export default async function TrialsPage({ searchParams }: { searchParams: Promi
   const sql = await db();
   const rows = await sql<Row[]>`
     SELECT t.id, t.email_normalized, t.created_at, t.device_id, l.key, l.expires_at, c.name, c.email, c.phone,
-      EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id AND o.status = 'pagado') AS bought
-    FROM trials t
-    LEFT JOIN licenses l ON l.id = t.license_id
-    LEFT JOIN customers c ON c.id = l.customer_id
+      EXISTS (SELECT 1 FROM lotbot.orders o WHERE o.customer_id = c.id AND o.status = 'pagado') AS bought
+    FROM lotbot.trials t
+    LEFT JOIN lotbot.licenses l ON l.id = t.license_id
+    LEFT JOIN lotbot.customers c ON c.id = l.customer_id
     ORDER BY t.id DESC LIMIT 300
   `;
   const settings = await siteSettings();

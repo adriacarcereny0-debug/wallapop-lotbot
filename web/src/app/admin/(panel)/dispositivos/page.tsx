@@ -17,11 +17,11 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
   const like = `%${q.trim().toLowerCase()}%`;
   const rows = await sql<Row[]>`
     SELECT d.*, l.key, l.kind, c.email,
-      (SELECT count(DISTINCT e.ip_hash)::int FROM license_events e
+      (SELECT count(DISTINCT e.ip_hash)::int FROM lotbot.license_events e
         WHERE e.license_id = d.license_id AND e.at > now() - interval '7 days' AND e.ip_hash <> '') AS ips
-    FROM devices d
-    JOIN licenses l ON l.id = d.license_id
-    LEFT JOIN customers c ON c.id = l.customer_id
+    FROM lotbot.devices d
+    JOIN lotbot.licenses l ON l.id = d.license_id
+    LEFT JOIN lotbot.customers c ON c.id = l.customer_id
     WHERE (${estado} = '' OR d.status = ${estado})
       AND (${q.trim()} = '' OR lower(l.key) LIKE ${like} OR lower(c.email) LIKE ${like}
            OR lower(d.name) LIKE ${like} OR lower(d.fingerprint) LIKE ${like})

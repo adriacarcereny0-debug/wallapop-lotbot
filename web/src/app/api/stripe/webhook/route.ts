@@ -24,7 +24,7 @@ export async function POST(request: Request) {
       const reference = session.metadata?.order_reference || session.client_reference_id;
       const sql = await db();
       const rows = await sql<{ id: number; amount_cents: number }[]>`
-        SELECT id, amount_cents FROM orders WHERE reference = ${reference ?? ""}
+        SELECT id, amount_cents FROM lotbot.orders WHERE reference = ${reference ?? ""}
       `;
       if (rows.length && (session.amount_total ?? 0) >= rows[0].amount_cents) {
         await markOrderPaid(rows[0].id, "stripe");

@@ -16,22 +16,26 @@ export default async function Dashboard() {
     }[]
   >`
     SELECT
-      (SELECT count(*)::int FROM orders WHERE status = 'pendiente') AS pending,
-      (SELECT count(*)::int FROM orders WHERE status = 'pagado' AND paid_at > date_trunc('month', now())) AS paid_month,
-      (SELECT COALESCE(sum(amount_cents), 0)::int FROM orders WHERE status = 'pagado' AND paid_at > date_trunc('month', now())) AS revenue_month,
-      (SELECT count(*)::int FROM licenses WHERE status = 'activa' AND kind <> 'prueba' AND (expires_at IS NULL OR expires_at > now())) AS active,
-      (SELECT count(*)::int FROM trials WHERE created_at > now() - interval '7 days') AS trials_week,
-      (SELECT count(*)::int FROM licenses WHERE kind = 'prueba' AND status = 'activa' AND expires_at > now()) AS trials_active,
-      (SELECT count(*)::int FROM customers) AS customers
+      (SELECT count(*)::int FROM lotbot.orders WHERE status = 'pendiente') AS pending,
+      (SELECT count(*)::int FROM lotbot.orders WHERE status = 'pagado' AND paid_at > date_trunc('month', now())) AS paid_month,
+      (SELECT COALESCE(sum(amount_cents), 0)::int FROM lotbot.orders WHERE status = 'pagado' AND paid_at > date_trunc('month', now())) AS revenue_month,
+      (SELECT count(*)::int FROM lotbot.licenses WHERE status = 'activa' AND kind <> 'prueba' AND (expires_at IS NULL OR expires_at > now())) AS active,
+      (SELECT count(*)::int FROM lotbot.trials WHERE created_at > now() - interval '7 days') AS trials_week,
+      (SELECT count(*)::int FROM lotbot.licenses WHERE kind = 'prueba' AND status = 'activa' AND expires_at > now()) AS trials_active,
+      (SELECT count(*)::int FROM lotbot.customers) AS customers
   `;
   const events = await sql<{ at: Date; actor: string; action: string; detail: string }[]>`
-    SELECT at, actor, action, detail FROM events ORDER BY id DESC LIMIT 12
+    SELECT at, actor, action, detail FROM lotbot.events ORDER BY id DESC LIMIT 12
   `;
   const settings = await siteSettings();
   const methods = await allPaymentMethods();
   const examples = await plansAreExamples();
   const usable = methods.filter((m) => m.enabled && (m.id === "tarjeta" ? stripeConfigured() : m.instructions.trim()));
   const todo = [
+    !process.env.SESSION_SECRET && {
+      text: "Falta SESSION_SECRET en Vercel: pon un texto largo y aleatorio (protege la sesión de /admin).",
+      href: "/admin",
+    },
     !signingConfigured() && {
       text: "Falta LICENSE_SIGNING_KEY: LOT Bot no podrá activar licencias. Genera las claves (web/scripts/generar-claves.mjs) y ponla en Vercel.",
       href: "/admin/licencias",

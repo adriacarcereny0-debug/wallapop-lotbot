@@ -18,9 +18,9 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
   const like = `%${q.trim().toLowerCase()}%`;
   const rows = await sql<Row[]>`
     SELECT o.*, c.email, c.name, c.phone, l.key AS license_key
-    FROM orders o
-    LEFT JOIN customers c ON c.id = o.customer_id
-    LEFT JOIN licenses l ON l.id = o.license_id
+    FROM lotbot.orders o
+    LEFT JOIN lotbot.customers c ON c.id = o.customer_id
+    LEFT JOIN lotbot.licenses l ON l.id = o.license_id
     WHERE (${estado} = '' OR o.status = ${estado})
       AND (${q.trim()} = '' OR lower(o.reference) LIKE ${like} OR lower(c.email) LIKE ${like} OR lower(c.name) LIKE ${like})
     ORDER BY o.id DESC LIMIT 200

@@ -57,13 +57,13 @@ export async function siteSettings(): Promise<SiteSettings> {
 export async function listPlans(onlyActive = true): Promise<Plan[]> {
   const sql = await db();
   return onlyActive
-    ? sql<Plan[]>`SELECT * FROM plans WHERE active ORDER BY sort, id`
-    : sql<Plan[]>`SELECT * FROM plans ORDER BY sort, id`;
+    ? sql<Plan[]>`SELECT * FROM lotbot.plans WHERE active ORDER BY sort, id`
+    : sql<Plan[]>`SELECT * FROM lotbot.plans ORDER BY sort, id`;
 }
 
 export async function getPlan(slug: string): Promise<Plan | null> {
   const sql = await db();
-  const rows = await sql<Plan[]>`SELECT * FROM plans WHERE slug = ${slug} AND active`;
+  const rows = await sql<Plan[]>`SELECT * FROM lotbot.plans WHERE slug = ${slug} AND active`;
   return rows[0] ?? null;
 }
 
@@ -74,19 +74,19 @@ export function stripeConfigured(): boolean {
 /** Métodos que ve el cliente: activados y listos (la tarjeta, con Stripe configurado). */
 export async function publicPaymentMethods(): Promise<PaymentMethod[]> {
   const sql = await db();
-  const rows = await sql<PaymentMethod[]>`SELECT * FROM payment_methods WHERE enabled ORDER BY sort`;
+  const rows = await sql<PaymentMethod[]>`SELECT * FROM lotbot.payment_methods WHERE enabled ORDER BY sort`;
   return rows.filter((m) => (m.id === "tarjeta" ? stripeConfigured() : m.instructions.trim() !== ""));
 }
 
 export async function allPaymentMethods(): Promise<PaymentMethod[]> {
   const sql = await db();
-  return sql<PaymentMethod[]>`SELECT * FROM payment_methods ORDER BY sort`;
+  return sql<PaymentMethod[]>`SELECT * FROM lotbot.payment_methods ORDER BY sort`;
 }
 
 export async function upsertCustomer(email: string, name = "", phone = ""): Promise<number> {
   const sql = await db();
   const rows = await sql<{ id: number }[]>`
-    INSERT INTO customers (email, email_normalized, name, phone)
+    INSERT INTO lotbot.customers (email, email_normalized, name, phone)
     VALUES (${email}, ${normalizeEmail(email)}, ${name}, ${phone})
     ON CONFLICT (email) DO UPDATE SET
       name = CASE WHEN EXCLUDED.name <> '' THEN EXCLUDED.name ELSE customers.name END,
@@ -128,7 +128,7 @@ export async function issueLicense(options: {
   for (let attempt = 0; attempt < 5; attempt++) {
     const key = newLicenseKey();
     const rows = await sql<License[]>`
-      INSERT INTO licenses (key, customer_id, kind, plan_id, expires_at, max_devices, notes)
+      INSERT INTO lotbot.licenses (key, customer_id, kind, plan_id, expires_at, max_devices, notes)
       VALUES (
         ${key}, ${options.customerId}, ${options.kind}, ${options.planId ?? null},
         ${hours == null ? null : sql`now() + make_interval(hours => ${hours})`},
@@ -157,8 +157,8 @@ export type VerifyResult = {
 export async function verifyLicense(key: string, deviceId: string): Promise<VerifyResult> {
   const sql = await db();
   const rows = await sql<(License & { plan_name: string | null; status_reason: string })[]>`
-    SELECT l.*, p.name AS plan_name FROM licenses l
-    LEFT JOIN plans p ON p.id = l.plan_id
+    SELECT l.*, p.name AS plan_name FROM lotbot.licenses l
+    LEFT JOIN lotbot.plans p ON p.id = l.plan_id
     WHERE l.key = ${key.trim().toUpperCase()}
   `;
   const license = rows[0];
@@ -175,20 +175,20 @@ export async function verifyLicense(key: string, deviceId: string): Promise<Veri
   }
   if (deviceId) {
     const [device] = await sql<{ status: string }[]>`
-      SELECT status FROM devices WHERE license_id = ${license.id} AND fingerprint = ${deviceId}
+      SELECT status FROM lotbot.devices WHERE license_id = ${license.id} AND fingerprint = ${deviceId}
     `;
     if (device?.status === "bloqueado") return { ...base, valid: false, reason: "Ordenador bloqueado." };
     if (device?.status === "activo") {
-      await sql`UPDATE devices SET last_seen = now() WHERE license_id = ${license.id} AND fingerprint = ${deviceId}`;
+      await sql`UPDATE lotbot.devices SET last_seen = now() WHERE license_id = ${license.id} AND fingerprint = ${deviceId}`;
     } else {
       const [{ count }] = await sql<{ count: number }[]>`
-        SELECT count(*)::int AS count FROM devices WHERE license_id = ${license.id} AND status = 'activo'
+        SELECT count(*)::int AS count FROM lotbot.devices WHERE license_id = ${license.id} AND status = 'activo'
       `;
       if (count >= license.max_devices) {
         return { ...base, valid: false, reason: `Esta licencia ya se usa en ${count} ordenador(es) (máximo ${license.max_devices}).` };
       }
       await sql`
-        INSERT INTO devices (license_id, fingerprint) VALUES (${license.id}, ${deviceId})
+        INSERT INTO lotbot.devices (license_id, fingerprint) VALUES (${license.id}, ${deviceId})
         ON CONFLICT (license_id, fingerprint) DO UPDATE SET status = 'activo', last_seen = now()
       `;
     }
@@ -217,16 +217,16 @@ export async function startTrial(input: {
   if (!settings.trial_enabled) return { ok: false, error: "La prueba gratis no está disponible ahora mismo." };
   const sql = await db();
   const normalized = normalizeEmail(input.email);
-  const used = await sql`SELECT 1 FROM trials WHERE email_normalized = ${normalized}`;
+  const used = await sql`SELECT 1 FROM lotbot.trials WHERE email_normalized = ${normalized}`;
   if (used.length) {
     return { ok: false, error: "Este email ya ha usado su prueba gratis (es de un solo uso). Si quieres seguir, elige un plan." };
   }
   if (input.deviceId) {
-    const device = await sql`SELECT 1 FROM trials WHERE device_id = ${input.deviceId}`;
+    const device = await sql`SELECT 1 FROM lotbot.trials WHERE device_id = ${input.deviceId}`;
     if (device.length) return { ok: false, error: "Este ordenador ya ha usado la prueba gratis." };
   }
   const [{ count }] = await sql<{ count: number }[]>`
-    SELECT count(*)::int AS count FROM trials
+    SELECT count(*)::int AS count FROM lotbot.trials
     WHERE ip_hash = ${input.ipHash} AND created_at > now() - interval '30 days'
   `;
   if (count >= TRIALS_PER_IP) {
@@ -237,12 +237,12 @@ export async function startTrial(input: {
   const license = await issueLicense({ customerId, kind: "prueba", durationHours: hours, notes: "Prueba gratis" });
   try {
     await sql`
-      INSERT INTO trials (email_normalized, ip_hash, device_id, license_id)
+      INSERT INTO lotbot.trials (email_normalized, ip_hash, device_id, license_id)
       VALUES (${normalized}, ${input.ipHash}, ${input.deviceId ?? null}, ${license.id})
     `;
   } catch {
     // Dos peticiones a la vez con el mismo email: solo vale la primera.
-    await sql`DELETE FROM licenses WHERE id = ${license.id}`;
+    await sql`DELETE FROM lotbot.licenses WHERE id = ${license.id}`;
     return { ok: false, error: "Este email ya ha usado su prueba gratis (es de un solo uso)." };
   }
   await logEvent("Prueba gratis", `${input.email} → ${license.key}`);
@@ -285,7 +285,7 @@ export async function createOrder(input: {
   const customerId = await upsertCustomer(input.email, input.name, input.phone);
   for (let attempt = 0; attempt < 5; attempt++) {
     const rows = await sql<Order[]>`
-      INSERT INTO orders (reference, customer_id, plan_id, plan_name, method, amount_cents, currency)
+      INSERT INTO lotbot.orders (reference, customer_id, plan_id, plan_name, method, amount_cents, currency)
       VALUES (${newOrderReference()}, ${customerId}, ${input.plan.id}, ${input.plan.name},
               ${input.method}, ${input.plan.price_cents}, ${input.plan.currency})
       ON CONFLICT (reference) DO NOTHING
@@ -303,9 +303,9 @@ export async function getOrder(reference: string) {
   const sql = await db();
   const rows = await sql<(Order & { license_key: string | null; license_expires: Date | null; email: string | null })[]>`
     SELECT o.*, l.key AS license_key, l.expires_at AS license_expires, c.email
-    FROM orders o
-    LEFT JOIN licenses l ON l.id = o.license_id
-    LEFT JOIN customers c ON c.id = o.customer_id
+    FROM lotbot.orders o
+    LEFT JOIN lotbot.licenses l ON l.id = o.license_id
+    LEFT JOIN lotbot.customers c ON c.id = o.customer_id
     WHERE o.reference = ${reference}
   `;
   return rows[0] ?? null;
@@ -318,23 +318,23 @@ export async function getOrder(reference: string) {
 export async function markOrderPaid(orderId: number, actor: string): Promise<Order> {
   const sql = await db();
   return sql.begin(async (tx) => {
-    const [order] = await tx<Order[]>`SELECT * FROM orders WHERE id = ${orderId} FOR UPDATE`;
+    const [order] = await tx<Order[]>`SELECT * FROM lotbot.orders WHERE id = ${orderId} FOR UPDATE`;
     if (!order) throw new Error("No existe el pedido.");
     if (order.status === "pagado" && order.license_id) return order;
-    const [plan] = await tx<Plan[]>`SELECT * FROM plans WHERE id = ${order.plan_id}`;
+    const [plan] = await tx<Plan[]>`SELECT * FROM lotbot.plans WHERE id = ${order.plan_id}`;
     const days = plan?.duration_days ?? null;
     const [license] = await tx<License[]>`
-      INSERT INTO licenses (key, customer_id, kind, plan_id, expires_at, max_devices, notes)
+      INSERT INTO lotbot.licenses (key, customer_id, kind, plan_id, expires_at, max_devices, notes)
       VALUES (${newLicenseKey()}, ${order.customer_id}, 'pago', ${order.plan_id},
               ${days == null ? null : tx`now() + make_interval(days => ${days})`},
               ${plan?.max_devices ?? 1}, ${`Pedido ${order.reference}`})
       RETURNING *
     `;
     const [updated] = await tx<Order[]>`
-      UPDATE orders SET status = 'pagado', paid_at = now(), license_id = ${license.id}
+      UPDATE lotbot.orders SET status = 'pagado', paid_at = now(), license_id = ${license.id}
       WHERE id = ${order.id} RETURNING *
     `;
-    await tx`INSERT INTO events (actor, action, detail) VALUES (${actor}, 'Pedido pagado', ${`${order.reference} → ${license.key}`})`;
+    await tx`INSERT INTO lotbot.events (actor, action, detail) VALUES (${actor}, 'Pedido pagado', ${`${order.reference} → ${license.key}`})`;
     return updated;
   });
 }

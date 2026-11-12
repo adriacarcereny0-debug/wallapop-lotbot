@@ -24,11 +24,11 @@ export default async function LicensesPage({ searchParams }: { searchParams: Pro
   const like = `%${q.trim().toLowerCase()}%`;
   const rows = await sql<Row[]>`
     SELECT l.*, c.email, c.name, p.name AS plan_name,
-      (SELECT count(*)::int FROM devices d WHERE d.license_id = l.id AND d.status = 'activo') AS devices,
-      (SELECT max(last_seen) FROM devices d WHERE d.license_id = l.id) AS last_seen
-    FROM licenses l
-    LEFT JOIN customers c ON c.id = l.customer_id
-    LEFT JOIN plans p ON p.id = l.plan_id
+      (SELECT count(*)::int FROM lotbot.devices d WHERE d.license_id = l.id AND d.status = 'activo') AS devices,
+      (SELECT max(last_seen) FROM lotbot.devices d WHERE d.license_id = l.id) AS last_seen
+    FROM lotbot.licenses l
+    LEFT JOIN lotbot.customers c ON c.id = l.customer_id
+    LEFT JOIN lotbot.plans p ON p.id = l.plan_id
     WHERE (${tipo} = '' OR l.kind = ${tipo})
       AND (${q.trim()} = '' OR lower(l.key) LIKE ${like} OR lower(c.email) LIKE ${like} OR lower(c.name) LIKE ${like})
     ORDER BY l.id DESC LIMIT 300

@@ -21,8 +21,8 @@ const fp = (name = "") => `pc-${name}-${randomUUID().replace(/-/g, "")}`.slice(0
 async function newLicense({ kind = "pago", devices = 1, days = 30, plan = "mensual" } = {}) {
   const key = `LOTB-${block()}-${block()}-${block()}`;
   const [row] = await sql`
-    INSERT INTO licenses (key, kind, plan_id, max_devices, expires_at)
-    VALUES (${key}, ${kind}, (SELECT id FROM plans WHERE slug = ${plan}), ${devices},
+    INSERT INTO lotbot.licenses (key, kind, plan_id, max_devices, expires_at)
+    VALUES (${key}, ${kind}, (SELECT id FROM lotbot.plans WHERE slug = ${plan}), ${devices},
             ${days == null ? null : sql`now() + make_interval(days => ${days})`})
     RETURNING id`;
   return { key, id: row.id };
@@ -127,15 +127,15 @@ test("suspender, revocar y reactivar se notan al renovar", async () => {
   const { key, id } = await newLicense();
   const device = fp("s");
   await call("activate", key, device);
-  await sql`UPDATE licenses SET status = 'suspendida', status_reason = 'impago' WHERE id = ${id}`;
+  await sql`UPDATE lotbot.licenses SET status = 'suspendida', status_reason = 'impago' WHERE id = ${id}`;
   const suspended = await call("refresh", key, device);
   assert.equal(suspended.status, 403);
   assert.equal(suspended.data.code, "LICENSE_SUSPENDED");
   assert.match(suspended.data.message, /impago/);
-  await sql`UPDATE licenses SET status = 'revocada' WHERE id = ${id}`;
+  await sql`UPDATE lotbot.licenses SET status = 'revocada' WHERE id = ${id}`;
   assert.equal((await call("refresh", key, device)).data.code, "LICENSE_REVOKED");
   assert.equal((await call("activate", key, fp("s2"))).data.code, "LICENSE_REVOKED");
-  await sql`UPDATE licenses SET status = 'activa', status_reason = '' WHERE id = ${id}`;
+  await sql`UPDATE lotbot.licenses SET status = 'activa', status_reason = '' WHERE id = ${id}`;
   assert.equal((await call("refresh", key, device)).status, 200);
 });
 
@@ -143,7 +143,7 @@ test("una licencia caducada no renueva", async () => {
   const { key, id } = await newLicense();
   const device = fp("e");
   await call("activate", key, device);
-  await sql`UPDATE licenses SET expires_at = now() - interval '1 minute' WHERE id = ${id}`;
+  await sql`UPDATE lotbot.licenses SET expires_at = now() - interval '1 minute' WHERE id = ${id}`;
   const result = await call("refresh", key, device);
   assert.equal(result.data.code, "LICENSE_EXPIRED");
 });
@@ -166,7 +166,7 @@ test("un ordenador bloqueado no puede activar esa licencia", async () => {
   const { key, id } = await newLicense({ devices: 2 });
   const device = fp("b");
   await call("activate", key, device);
-  await sql`UPDATE devices SET status = 'bloqueado' WHERE license_id = ${id} AND fingerprint = ${device}`;
+  await sql`UPDATE lotbot.devices SET status = 'bloqueado' WHERE license_id = ${id} AND fingerprint = ${device}`;
   assert.equal((await call("activate", key, device)).data.code, "DEVICE_BLOCKED");
   assert.equal((await call("refresh", key, device)).data.code, "DEVICE_BLOCKED");
 });

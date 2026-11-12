@@ -4,6 +4,8 @@ import { SCHEMA_VERSION, db, hasDatabase } from "@/lib/db";
 import { currentKeyId, signingConfigured } from "@/lib/signing";
 
 export const dynamic = "force-dynamic";
+// Firma Ed25519 y Postgres: necesitan Node.js (no el entorno «edge»).
+export const runtime = "nodejs";
 
 export async function GET() {
   if (!hasDatabase()) return NextResponse.json({ ok: false, database: "sin configurar" }, { status: 503 });
