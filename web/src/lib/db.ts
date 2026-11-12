@@ -336,6 +336,16 @@ const MIGRATIONS: { version: number; name: string; sql: string }[] = [
     ALTER TABLE lotbot.license_connections ENABLE ROW LEVEL SECURITY;
     `,
   },
+  {
+    version: 6,
+    name: "integridad: huellas de los ficheros oficiales y resultado por ordenador",
+    sql: `
+    ALTER TABLE lotbot.releases ADD COLUMN IF NOT EXISTS manifest jsonb NOT NULL DEFAULT '{}';
+    ALTER TABLE lotbot.devices ADD COLUMN IF NOT EXISTS integrity text NOT NULL DEFAULT '';
+    ALTER TABLE lotbot.devices ADD COLUMN IF NOT EXISTS integrity_at timestamptz;
+    ALTER TABLE lotbot.devices ADD COLUMN IF NOT EXISTS integrity_detail text NOT NULL DEFAULT '';
+    `,
+  },
 ];
 
 /** Número de bloqueo para las migraciones (cualquiera fijo). */

@@ -106,6 +106,15 @@ export function signUpdate(payload: Omit<UpdatePayload, "kid" | "v" | "typ">): s
   return `${body}.${b64url(sign(null, Buffer.from(body, "utf8"), loaded.key))}`;
 }
 
+/** Lista firmada de huellas de los ficheros oficiales de una versión. */
+export function signIntegrity(payload: { ver: string; plat: string; files: Record<string, string>; dev: string; iat: number; exp: number }): string {
+  const loaded = loadKey();
+  if (!loaded) throw new Error("Falta LICENSE_SIGNING_KEY.");
+  const full = { v: 1, typ: "lotbot-integrity", kid: loaded.kid, ...payload };
+  const body = `${TOKEN_PREFIX}.${b64url(Buffer.from(JSON.stringify(full), "utf8"))}`;
+  return `${body}.${b64url(sign(null, Buffer.from(body, "utf8"), loaded.key))}`;
+}
+
 /** Huella de la clave de licencia (el pase no lleva la clave en claro). */
 export function keyHash(licenseKey: string): string {
   return createHash("sha256").update(licenseKey.trim().toUpperCase()).digest("hex").slice(0, 16);

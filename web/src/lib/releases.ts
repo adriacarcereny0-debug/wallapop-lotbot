@@ -75,7 +75,11 @@ export type ReleaseInput = {
   notes?: string;
   rollout_percent?: number;
   mandatory?: boolean;
-  assets: { platform: string; name: string; sha256: string; size: number; github_asset_id?: number | null; url?: string }[];
+  assets: {
+    platform: string; name: string; sha256: string; size: number; github_asset_id?: number | null; url?: string;
+    /** Huellas de los ficheros del programa instalado: { "LOT-Bot.exe": "<sha256>" }. */
+    manifest?: Record<string, string>;
+  }[];
 };
 
 export async function registerRelease(input: ReleaseInput): Promise<{ ok: true; ids: number[] } | { ok: false; error: string }> {
@@ -89,6 +93,11 @@ export async function registerRelease(input: ReleaseInput): Promise<{ ok: true; 
     if (!PLATFORMS.includes(asset.platform as Platform)) return { ok: false, error: `Plataforma no válida: ${asset.platform}` };
     if (!/^[0-9a-f]{64}$/.test(String(asset.sha256))) return { ok: false, error: "SHA-256 no válido." };
     if (!(Number(asset.size) > 0)) return { ok: false, error: "Tamaño no válido." };
+    const manifest = asset.manifest ?? {};
+    const entries = Object.entries(manifest);
+    if (entries.length > 50 || entries.some(([p, h]) => p.length > 200 || p.includes("..") || !/^[0-9a-f]{64}$/.test(String(h)))) {
+      return { ok: false, error: "Lista de huellas no válida." };
+    }
     if (!asset.github_asset_id && !/^https:\/\//.test(asset.url ?? "")) {
       return { ok: false, error: "Cada instalador necesita github_asset_id o una url https." };
     }
@@ -98,14 +107,15 @@ export async function registerRelease(input: ReleaseInput): Promise<{ ok: true; 
   for (const asset of input.assets) {
     const [row] = await sql<{ id: number }[]>`
       INSERT INTO lotbot.releases (version, version_sort, platform, channel, asset_name, github_asset_id,
-        download_url, sha256, size, notes, rollout_percent, mandatory)
+        download_url, sha256, size, notes, rollout_percent, mandatory, manifest)
       VALUES (${input.version}, ${sort}, ${asset.platform}, ${channel}, ${String(asset.name).slice(0, 200)},
         ${asset.github_asset_id ?? null}, ${asset.url ?? ""}, ${asset.sha256}, ${Number(asset.size)},
-        ${String(input.notes ?? "").slice(0, 8000)}, ${rollout}, ${Boolean(input.mandatory)})
+        ${String(input.notes ?? "").slice(0, 8000)}, ${rollout}, ${Boolean(input.mandatory)},
+        ${sql.json(asset.manifest ?? {})})
       ON CONFLICT (version, platform, channel) DO UPDATE SET
         asset_name = EXCLUDED.asset_name, github_asset_id = EXCLUDED.github_asset_id,
         download_url = EXCLUDED.download_url, sha256 = EXCLUDED.sha256, size = EXCLUDED.size,
-        notes = EXCLUDED.notes
+        notes = EXCLUDED.notes, manifest = EXCLUDED.manifest
       RETURNING id
     `;
     ids.push(row.id);

@@ -103,6 +103,13 @@ jobs:
           & $signtool.FullName sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 "dist\LOT-Bot-Setup-$env:VERSION.exe"
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      - name: Huellas oficiales (para comprobar la instalación)
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist\LOT-Bot\LOT-Bot.exe -Algorithm SHA256).Hash.ToLower()
+          @{ "LOT-Bot.exe" = $hash } | ConvertTo-Json | Set-Content -Encoding utf8 dist\manifest-windows-x64.json
+          Get-Content dist\manifest-windows-x64.json
+
       - name: Probar como el cliente (instalar, actualizar encima, desinstalar)
         shell: pwsh
         run: |
@@ -121,6 +128,8 @@ jobs:
           if ($p.ExitCode -ne 0 -or -not (Test-Path $exe)) { throw "No se ha instalado (codigo $($p.ExitCode))" }
           if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\LOT Bot.lnk")) { throw "Falta el acceso en el menu Inicio" }
           Autoprueba "recien instalado"
+          $oficial = (Get-Content dist\manifest-windows-x64.json | ConvertFrom-Json)."LOT-Bot.exe"
+          if ((Get-FileHash $exe -Algorithm SHA256).Hash.ToLower() -ne $oficial) { throw "El exe instalado no coincide con la huella oficial" }
 
           # 2. Datos del cliente: deben sobrevivir a actualizar y a desinstalar.
           $datos = "$env:LOCALAPPDATA\LOT Bot\config"
@@ -142,7 +151,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: dist/LOT-Bot-Setup-${{ needs.version.outputs.version }}.exe
+          path: |
+            dist/LOT-Bot-Setup-${{ needs.version.outputs.version }}.exe
+            dist/manifest-windows-x64.json
           if-no-files-found: error
 
   mac:
@@ -188,6 +199,11 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           ./build/build_macos.sh
+      - name: Huellas oficiales (para comprobar la instalación)
+        run: |
+          HASH=$(shasum -a 256 "dist/LOT Bot.app/Contents/MacOS/LOT-Bot" | cut -d' ' -f1)
+          printf '{"Contents/MacOS/LOT-Bot": "%s"}\n' "$HASH" > "dist/manifest-mac-${{ matrix.arch }}.json"
+          cat "dist/manifest-mac-${{ matrix.arch }}.json"
       - name: Probar la actualización de Mac (sustituir la app desde el .dmg)
         run: |
           DMG="$PWD/dist/LOT-Bot-macOS-${{ matrix.arch }}.dmg"
@@ -206,7 +222,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mac-${{ matrix.arch }}
-          path: dist/LOT-Bot-macOS-${{ matrix.arch }}.dmg
+          path: |
+            dist/LOT-Bot-macOS-${{ matrix.arch }}.dmg
+            dist/manifest-mac-${{ matrix.arch }}.json
           if-no-files-found: error
 
   publicar:
@@ -277,6 +295,7 @@ jobs:
                   "platform": platform, "name": name,
                   "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
                   "github_asset_id": assets[name]["id"], "url": assets[name]["browser_download_url"],
+                  "manifest": json.load(open(f"dist/manifest-{platform}.json", encoding="utf-8-sig")),
               })
           request = urllib.request.Request(
               os.environ["SITE"].rstrip("/") + "/api/v1/releases",

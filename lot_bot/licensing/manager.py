@@ -171,6 +171,8 @@ class LicenseManager:
         self._saved_max_seen = self._data.max_seen
         self._last_signature: tuple | None = None
         self.listeners: list[Callable[[LicenseStatus], None]] = []
+        #: Resultado de comprobar la instalación (programa instalado), o None.
+        self.integrity = None
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None

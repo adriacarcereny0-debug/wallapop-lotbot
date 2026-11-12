@@ -435,6 +435,13 @@ class LicensePanel(QWidget):
             lines.append(f"Funciona sin conexión hasta: {_fmt(status.lease_expires_at)}")
         lines.append(f"Última comprobación: {_fmt(status.last_success)}" + (" (ahora sin conexión)" if status.offline else ""))
         lines.append(f"Este ordenador: {device.name} · {device.os}")
+        integrity = getattr(manager, "integrity", None)
+        if integrity is not None and integrity.state in ("correcta", "modificada"):
+            lines.append(
+                "Instalación: oficial (comprobada)"
+                if integrity.state == "correcta"
+                else "Instalación: algunos ficheros no coinciden con los oficiales. Reinstala LOT Bot."
+            )
         self.details.setText("\n".join(line for line in lines if line))
         has_key = bool(status.key_masked)
         self.activate_button.setEnabled(True)

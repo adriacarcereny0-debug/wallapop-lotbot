@@ -16,7 +16,7 @@ export const RULES = {
 };
 
 export type Alert = {
-  kind: "conexiones" | "cambios" | "claves" | "ordenador";
+  kind: "conexiones" | "cambios" | "claves" | "ordenador" | "integridad";
   title: string;
   detail: string;
   license_id: number | null;
@@ -89,6 +89,20 @@ export async function licenseAlerts(): Promise<Alert[]> {
       kind: "ordenador", license_id: null, key: null, email: null,
       title: "Un ordenador con muchas licencias",
       detail: `El ordenador ${r.fingerprint.slice(0, 10)}… ha usado ${r.n} licencias: ${r.keys.slice(0, 6).join(", ")}.`,
+    });
+  }
+  const modified = await sql<{ license_id: number; key: string; email: string | null; name: string; app_version: string; detail: string; at: Date }[]>`
+    SELECT l.id AS license_id, l.key, c.email, d.name, d.app_version, d.integrity_detail AS detail, d.integrity_at AS at
+    FROM lotbot.devices d JOIN lotbot.licenses l ON l.id = d.license_id
+    LEFT JOIN lotbot.customers c ON c.id = l.customer_id
+    WHERE d.integrity = 'modificada' AND d.status = 'activo'
+    ORDER BY d.integrity_at DESC LIMIT 100
+  `;
+  for (const r of modified) {
+    alerts.push({
+      kind: "integridad", license_id: r.license_id, key: r.key, email: r.email,
+      title: "Instalación modificada",
+      detail: `«${r.name || "Ordenador"}» (versión ${r.app_version || "?"}) tiene ficheros que no coinciden con los oficiales${r.detail ? `: ${r.detail}` : ""}. Puede ser una copia manipulada o un fallo de disco; pídele que reinstale.`,
     });
   }
   return alerts;

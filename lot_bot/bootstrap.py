@@ -225,6 +225,31 @@ class Application:
 
 
 # ---------------------------------------------------------------------------
+def _start_integrity_check(license_manager) -> None:
+    """Programa instalado: ¿sus ficheros son los oficiales? (solo informa)."""
+    from lot_bot.config.paths import is_frozen
+
+    if not is_frozen() or not license_manager.enforced:
+        return
+    import threading
+
+    from lot_bot.core.release_updater import current_platform
+    from lot_bot.licensing.integrity import check_installation, installation_root
+
+    platform = current_platform()
+    root = installation_root(platform) if platform else None
+    if root is None:
+        return
+
+    def run() -> None:
+        try:
+            license_manager.integrity = check_installation(license_manager, platform, root)
+        except Exception:  # nunca debe molestar al cliente
+            logger.exception("Comprobación de la instalación")
+
+    threading.Thread(target=run, name="lotbot-integridad", daemon=True).start()
+
+
 def load_integration_mode(database: Database) -> str:
     with database.session_scope() as session:
         row = session.get(Setting, INTEGRATION_SETTINGS_KEY)
@@ -388,6 +413,7 @@ def create_application(
         app.publish_queue.start_worker()
         # Renovar el pase de licencia en segundo plano (si esta versión la exige).
         license_manager.start_background()
+        _start_integrity_check(license_manager)
     _status = license_manager.status()
     logger.info(
         "Licencia: %s%s%s",

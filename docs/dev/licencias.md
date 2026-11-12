@@ -79,3 +79,24 @@ el servidor con variables de entorno. Desde el código fuente sí, para pruebas:
 * CI `.github/workflows/pruebas.yml`: toda la batería y la autoprueba en
   Windows y Mac con Python 3.11. La autoprueba (`--autoprueba`) comprueba
   también la huella del ordenador y la firma Ed25519 dentro del ejecutable.
+
+## Protección (fase 5)
+
+Medidas defensivas, sin ofuscar el programa:
+
+- **Alertas de posible abuso** (`/admin/alertas`, aviso en el Resumen):
+  - licencia usada desde muchas conexiones distintas (más de 3 por ordenador
+    permitido en 7 días); de la conexión solo se guarda una huella irreversible;
+  - muchos cambios de ordenador (más de 6 en 30 días);
+  - muchas claves inventadas desde una conexión (10+ en 24 h; se frena sola a 20/h);
+  - un ordenador con 3 o más licencias;
+  - instalación modificada (ver abajo).
+  Solo avisan: el admin decide si suspender, desvincular o bloquear.
+- **Número de licencia** en el informe de soporte y en el registro al
+  arrancar (la clave va enmascarada). Sirve para saber de dónde viene una copia.
+- **Comprobación de la instalación** (`lot_bot/licensing/integrity.py`): el
+  programa instalado pide la lista FIRMADA de huellas de sus ficheros oficiales
+  (la genera GitHub Actions al publicar, después de firmar) y la compara con
+  los suyos. El resultado se cuenta al servidor; si no coincide, sale en
+  Alertas y en Configuración → Licencia. **Nunca bloquea ni borra nada** (un
+  disco dañado o un antivirus también pueden cambiar un fichero).
