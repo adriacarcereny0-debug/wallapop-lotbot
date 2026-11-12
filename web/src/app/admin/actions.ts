@@ -10,6 +10,8 @@ import { headers } from "next/headers";
 
 import { login, logout, requireAdmin } from "@/lib/auth";
 import { createPasswordToken } from "@/lib/customer-auth";
+import { confirmSetup, disable, startSetup } from "@/lib/totp";
+import { couponProblem, createCoupon, setCouponActive, type CouponInput } from "@/lib/coupons";
 import { db, logEvent, setSetting } from "@/lib/db";
 import { issueLicense, markOrderPaid, siteSettings, upsertCustomer } from "@/lib/store";
 import { cleanEmail, cleanText, siteUrl } from "@/lib/util";
@@ -30,7 +32,7 @@ function back(path: string, message?: string): never {
 
 // --- Sesión -----------------------------------------------------------------
 export async function loginAction(_prev: FormState, form: FormData): Promise<FormState> {
-  const result = await login(String(form.get("password") ?? ""));
+  const result = await login(String(form.get("password") ?? ""), String(form.get("code") ?? ""));
   if (!result.ok) return { error: result.error };
   redirect("/admin");
 }
@@ -196,6 +198,65 @@ export async function releaseUpdateAction(form: FormData): Promise<void> {
     if (rows.length) await logEvent("Versión obligatoria (cambio)", `${rows[0].version} ${rows[0].platform}`, "admin");
   }
   back("/admin/versiones", rows.length ? "Versión actualizada." : undefined);
+}
+
+// --- Seguridad (verificación en dos pasos) ---------------------------------------
+export async function twoFactorStartAction(): Promise<void> {
+  await requireAdmin();
+  await startSetup();
+  back("/admin/seguridad");
+}
+
+export async function twoFactorConfirmAction(form: FormData): Promise<void> {
+  await requireAdmin();
+  const ok = await confirmSetup(cleanText(form.get("code"), 10));
+  if (ok) await logEvent("Verificación en dos pasos activada", "", "admin");
+  back("/admin/seguridad", ok ? "Verificación en dos pasos activada." : "⚠ Código incorrecto. Revisa la hora del móvil y vuelve a probar.");
+}
+
+export async function twoFactorDisableAction(form: FormData): Promise<void> {
+  await requireAdmin();
+  const ok = await disable(cleanText(form.get("code"), 10));
+  if (ok) await logEvent("Verificación en dos pasos desactivada", "", "admin");
+  back("/admin/seguridad", ok ? "Verificación en dos pasos desactivada." : "⚠ Código incorrecto.");
+}
+
+// --- Cupones ----------------------------------------------------------------
+export async function couponCreateAction(form: FormData): Promise<void> {
+  await requireAdmin();
+  const duration = cleanText(form.get("duration"), 20);
+  const expiresText = cleanText(form.get("expires"), 10);
+  const input: CouponInput = {
+    code: cleanText(form.get("code"), 30).toUpperCase(),
+    percent: num(form.get("percent"), 0) ?? 0,
+    duration: (["once", "repeating", "forever"].includes(duration) ? duration : "once") as CouponInput["duration"],
+    months: num(form.get("months")),
+    max: num(form.get("max")),
+    expires: expiresText ? new Date(`${expiresText}T23:59:59`) : null,
+  };
+  const problem = couponProblem(input);
+  if (problem) back("/admin/cupones", `⚠ ${problem}`);
+  try {
+    await createCoupon(input);
+  } catch (error) {
+    console.error("Cupón:", error);
+    back("/admin/cupones", "⚠ Stripe no ha aceptado el cupón (¿ya existe ese código?).");
+  }
+  await logEvent("Cupón creado", `${input.code} · ${input.percent} %`, "admin");
+  back("/admin/cupones", `Cupón ${input.code} creado.`);
+}
+
+export async function couponToggleAction(form: FormData): Promise<void> {
+  await requireAdmin();
+  const id = cleanText(form.get("id"), 80);
+  const active = form.get("active") === "1";
+  try {
+    await setCouponActive(id, active);
+  } catch (error) {
+    console.error("Cupón:", error);
+    back("/admin/cupones", "⚠ No se ha podido cambiar en Stripe.");
+  }
+  back("/admin/cupones", active ? "Cupón activado." : "Cupón desactivado.");
 }
 
 // --- Pruebas gratis ---------------------------------------------------------

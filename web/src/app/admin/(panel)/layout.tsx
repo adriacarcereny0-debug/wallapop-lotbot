@@ -18,8 +18,10 @@ const LINKS = [
   ["/admin/pruebas", "Pruebas gratis"],
   ["/admin/clientes", "Clientes"],
   ["/admin/planes", "Planes y precios"],
+  ["/admin/cupones", "Cupones"],
   ["/admin/pagos", "Formas de pago"],
   ["/admin/ajustes", "Ajustes"],
+  ["/admin/seguridad", "Seguridad"],
   ["/admin/registro", "Registro"],
 ];
 

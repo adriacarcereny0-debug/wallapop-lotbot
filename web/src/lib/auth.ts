@@ -7,6 +7,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { db } from "./db";
+import { twoFactorEnabled, verifyCode } from "./totp";
 import { clientIp, hashIp, secret } from "./util";
 
 const COOKIE = "lotbot_admin";
@@ -44,7 +45,7 @@ export async function requireAdmin(): Promise<void> {
 
 export type LoginResult = { ok: true } | { ok: false; error: string };
 
-export async function login(password: string): Promise<LoginResult> {
+export async function login(password: string, code = ""): Promise<LoginResult> {
   if (!adminConfigured()) {
     return { ok: false, error: "Falta ADMIN_PASSWORD (mínimo 8 caracteres) en las variables de Vercel." };
   }
@@ -63,6 +64,13 @@ export async function login(password: string): Promise<LoginResult> {
     await sql`INSERT INTO lotbot.login_attempts (ip_hash) VALUES (${ipHash})`;
     await new Promise((resolve) => setTimeout(resolve, 600));
     return { ok: false, error: "Contraseña incorrecta." };
+  }
+  if (await twoFactorEnabled()) {
+    if (!code.trim()) return { ok: false, error: "Escribe el código de 6 cifras de tu app de verificación." };
+    if (!(await verifyCode(code))) {
+      await sql`INSERT INTO lotbot.login_attempts (ip_hash) VALUES (${ipHash})`;
+      return { ok: false, error: "Código de verificación incorrecto o ya usado." };
+    }
   }
   await sql`DELETE FROM lotbot.login_attempts WHERE (ip_hash = ${ipHash} AND scope = 'admin') OR at < now() - interval '1 day'`;
   const expires = String(Date.now() + SESSION_HOURS * 3600 * 1000);

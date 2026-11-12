@@ -3,6 +3,7 @@ import Link from "next/link";
 import { licenseAlerts } from "@/lib/alerts";
 import { db } from "@/lib/db";
 import { signingConfigured } from "@/lib/signing";
+import { twoFactorEnabled } from "@/lib/totp";
 import { allPaymentMethods, plansAreExamples, siteSettings, stripeConfigured } from "@/lib/store";
 import { formatDate, formatMoney } from "@/lib/util";
 
@@ -33,10 +34,32 @@ export default async function Dashboard() {
   const examples = await plansAreExamples();
   const usable = methods.filter((m) => m.enabled && (m.id === "tarjeta" ? stripeConfigured() : m.instructions.trim()));
   const alerts = await licenseAlerts();
+  // Negocio (suscripciones de Stripe y pruebas gratis).
+  const [biz] = await sql<{
+    mrr_cents: number; subs_active: number; past_due: number; new_30: number; churn_30: number;
+    trials_30: number; trials_converted: number;
+  }[]>`
+    SELECT
+      COALESCE(sum(CASE WHEN p.billing_interval = 'year' THEN s.amount_cents / 12.0 ELSE s.amount_cents END)
+        FILTER (WHERE s.status IN ('active', 'past_due') AND NOT s.cancel_at_period_end AND s.cancel_at IS NULL), 0)::int AS mrr_cents,
+      count(*) FILTER (WHERE s.status IN ('active', 'trialing'))::int AS subs_active,
+      count(*) FILTER (WHERE s.status IN ('past_due', 'unpaid'))::int AS past_due,
+      count(*) FILTER (WHERE s.created_at > now() - interval '30 days')::int AS new_30,
+      count(*) FILTER (WHERE s.status = 'canceled' AND s.ended_at > now() - interval '30 days')::int AS churn_30,
+      (SELECT count(*)::int FROM lotbot.trials t WHERE t.created_at > now() - interval '30 days') AS trials_30,
+      (SELECT count(*)::int FROM lotbot.trials t JOIN lotbot.licenses l ON l.id = t.license_id
+        WHERE t.created_at > now() - interval '30 days' AND l.kind = 'pago') AS trials_converted
+    FROM lotbot.subscriptions s LEFT JOIN lotbot.plans p ON p.id = s.plan_id
+  `;
+  const conversion = biz.trials_30 ? Math.round((biz.trials_converted / biz.trials_30) * 100) : null;
   const todo = [
     alerts.length > 0 && {
       text: `Hay ${alerts.length} alerta${alerts.length === 1 ? "" : "s"} de posible abuso de licencias.`,
       href: "/admin/alertas",
+    },
+    !(await twoFactorEnabled()) && {
+      text: "Activa la verificación en dos pasos para entrar en /admin.",
+      href: "/admin/seguridad",
     },
     !process.env.SESSION_SECRET && {
       text: "Falta SESSION_SECRET en Vercel: pon un texto largo y aleatorio (protege la sesión de /admin).",
@@ -65,6 +88,22 @@ export default async function Dashboard() {
           {t.text} <Link href={t.href}>Arreglarlo →</Link>
         </div>
       ))}
+      <h2>Negocio</h2>
+      <div className="stats">
+        <div className="card stat"><b>{formatMoney(biz.mrr_cents)}</b><span>Ingresos recurrentes al mes</span></div>
+        <Link href="/admin/suscripciones" className="card stat" style={{ textDecoration: "none" }}>
+          <b>{biz.subs_active}</b><span>Suscripciones activas</span>
+        </Link>
+        <Link href="/admin/suscripciones?estado=past_due" className="card stat" style={{ textDecoration: "none" }}>
+          <b>{biz.past_due}</b><span>Con pago fallido</span>
+        </Link>
+        <div className="card stat"><b>+{biz.new_30} / −{biz.churn_30}</b><span>Altas / bajas (30 días)</span></div>
+        <div className="card stat">
+          <b>{conversion == null ? "—" : `${conversion} %`}</b>
+          <span>Pruebas que pasan a pago (30 días: {biz.trials_converted}/{biz.trials_30})</span>
+        </div>
+      </div>
+      <h2>Ventas y licencias</h2>
       <div className="stats">
         <Link href="/admin/pedidos?estado=pendiente" className="card stat" style={{ textDecoration: "none" }}>
           <b>{counts.pending}</b><span>Pedidos por cobrar</span>

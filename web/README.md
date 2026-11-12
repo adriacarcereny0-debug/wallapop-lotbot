@@ -140,6 +140,21 @@ de un solo uso también por ordenador; 20 claves inventadas por hora desde una
 misma conexión bloquean esa conexión una hora; más de 6 ordenadores nuevos al
 día en una licencia se frenan.
 
+## Administración
+
+- **Resumen:** ingresos recurrentes al mes, suscripciones activas, pagos
+  fallidos, altas y bajas (30 días) y cuántas pruebas gratis pasan a pago.
+- **Seguridad:** verificación en dos pasos para entrar en /admin (código de 6
+  cifras de una app como Google Authenticator). El secreto se guarda cifrado;
+  un código no vale dos veces. Si pierdes el móvil, usa la clave que guardaste
+  al activarla; sin ella, se desactiva borrando el ajuste `admin_2fa` de la
+  base de datos.
+- **Cupones:** códigos de descuento (porcentaje, solo el primer pago, varios
+  meses o siempre, usos máximos y caducidad). Se crean en Stripe y el cliente
+  los escribe en la página de pago.
+- **Alertas, Versiones, Suscripciones, Licencias, Dispositivos, Registro:** ver
+  las secciones de arriba.
+
 ## Probar en tu ordenador
 
 ```bash
