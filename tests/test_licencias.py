@@ -712,3 +712,44 @@ def test_en_demo_la_cola_publica_sin_licencia(app, manager):
 def test_la_app_arranca_con_el_gestor_de_licencias(app):
     assert app.license is not None
     assert app.license.status().allowed  # esta versión aún no la exige
+
+
+# ---------------------------------------------------------------------------
+# La clave de producción que va dentro del programa
+# ---------------------------------------------------------------------------
+@pytest.mark.licencia_real
+def test_el_programa_lleva_la_clave_publica_de_produccion(monkeypatch):
+    import lot_bot.licensing.config as config_module
+
+    monkeypatch.delenv("LOT_BOT_LICENSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LOT_BOT_LICENSE_SERVER", raising=False)
+    config = load_config()
+    assert config.enforced
+    assert config.server == "https://www.lotbot.es"
+    assert [hashlib.sha256(k).hexdigest()[:8] for k in config.public_keys] == ["f9607729"]
+    # En el programa instalado no se puede cambiar por otra.
+    monkeypatch.setattr(config_module, "is_frozen", lambda: True)
+    monkeypatch.setenv("LOT_BOT_LICENSE_PUBLIC_KEY", base64.b64encode(Signer().public_raw).decode())
+    monkeypatch.setenv("LOT_BOT_LICENSE_SERVER", "http://127.0.0.1:9")
+    frozen = load_config()
+    assert [hashlib.sha256(k).hexdigest()[:8] for k in frozen.public_keys] == ["f9607729"]
+    assert frozen.server == "https://www.lotbot.es"
+
+
+@pytest.mark.licencia_real
+def test_con_la_clave_real_el_demo_sigue_libre_y_wallapop_real_pide_licencia(app):
+    from lot_bot.licensing import LicenseManager
+
+    manager = LicenseManager(app.paths.config)
+    assert manager.enforced
+    assert manager.status().state is LicenseState.NONE
+    # DEMO: sin candado.
+    assert app.demo_mode and not isinstance(app.wallapop, LicensedService)
+    # Wallapop real: con candado (y sin licencia no deja publicar).
+    app.backend.demo = False
+    guard_backend(app.backend, manager)
+    assert isinstance(app.wallapop, LicensedService)
+    from lot_bot.wallapop.dto import ItemDraft
+
+    with pytest.raises(LicenseRequiredError):
+        app.wallapop.create_item("c1", ItemDraft(title="x", description="y", price=1))

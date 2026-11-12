@@ -22,6 +22,19 @@ from lot_bot.config.settings import Settings
 from lot_bot.database.engine import Database, set_database
 
 
+@pytest.fixture(autouse=True)
+def _sin_licencia_obligatoria(monkeypatch, request):
+    """Las pruebas del resto del programa no dependen de la licencia (ni del
+    servidor). Las de licencias usan su propia configuración, y las que
+    marcan `licencia_real` prueban la clave de dentro del programa."""
+    if request.node.get_closest_marker("licencia_real"):
+        return
+    import lot_bot.licensing.config as license_config
+
+    monkeypatch.setattr(license_config, "EMBEDDED_PUBLIC_KEYS", ())
+    monkeypatch.delenv("LOT_BOT_LICENSE_PUBLIC_KEY", raising=False)
+
+
 @pytest.fixture()
 def temp_paths(tmp_path: Path):
     """Redirige todas las rutas de la aplicacion a una carpeta temporal."""

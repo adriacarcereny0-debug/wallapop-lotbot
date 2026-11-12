@@ -23,6 +23,7 @@ filterwarnings = ["ignore::DeprecationWarning"]
 markers = [
     "ui: pruebas que requieren Qt (se omiten sin entorno grafico)",
     "e2e: pruebas de extremo a extremo en modo DEMO",
+    "licencia_real: usa la clave pública de producción que va dentro del programa",
 ]
 
 [tool.ruff]

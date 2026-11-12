@@ -1,11 +1,11 @@
 """Dónde está el servidor de licencias y con qué clave pública se comprueban los pases.
 
-La clave PÚBLICA va dentro del programa. Mientras esté vacía, LOT Bot no exige
-licencia (funciona como siempre): así se puede publicar esta versión antes de
-tener el servidor listo sin dejar a nadie sin programa.
+La clave PÚBLICA va dentro del programa: con ella LOT Bot exige licencia para
+usar Wallapop real (el modo DEMO sigue libre). Si la lista estuviera vacía, no
+se exigiría licencia.
 
-Para activar las licencias se pega aquí la clave pública que da
-`node web/scripts/generar-claves.mjs` (la PRIVADA va solo en Vercel).
+Es la que da `node web/scripts/generar-claves.mjs` y la que publica
+`https://www.lotbot.es/api/v1/public-key` (la PRIVADA va solo en Vercel).
 """
 
 from __future__ import annotations
@@ -19,7 +19,10 @@ from lot_bot.config.paths import is_frozen
 
 #: Claves públicas Ed25519 (32 bytes en base64) que firman los pases. Se admite
 #: más de una para poder cambiar de clave sin dejar a nadie fuera.
-EMBEDDED_PUBLIC_KEYS: tuple[str, ...] = ()
+EMBEDDED_PUBLIC_KEYS: tuple[str, ...] = (
+    # Producción (www.lotbot.es), identificador f9607729.
+    "kYewR6Gl4jpbIfvy61YCRSIwKqWeIIDlon/iL55L4oc=",
+)
 
 DEFAULT_SERVER = "https://www.lotbot.es"
 PURCHASE_URL = "https://www.lotbot.es/#precios"

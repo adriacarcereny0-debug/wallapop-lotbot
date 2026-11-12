@@ -41,18 +41,22 @@ El código está en `lot_bot/licensing/`.
 * **Datos**: nada de esto borra ni cambia cuentas, anuncios, fotos ni ajustes.
 * **DEMO**: gratis, sin licencia y sin candado.
 
-## Activar las licencias en producción
+## Licencias en producción
 
-Mientras `EMBEDDED_PUBLIC_KEYS` esté vacío, LOT Bot **no exige licencia**
-(estado `sin_exigir`): así esta versión se puede publicar antes de tener el
-servidor listo sin dejar a ningún cliente sin programa.
+La clave pública de producción (identificador `f9607729`, la misma que publica
+`https://www.lotbot.es/api/v1/public-key`) ya va en `EMBEDDED_PUBLIC_KEYS`.
+Por tanto **esta versión exige licencia** para usar Wallapop real (DEMO libre).
 
-1. Generar el par de claves en tu ordenador: `node web/scripts/generar-claves.mjs`.
-2. La **privada** → Vercel → `LICENSE_SIGNING_KEY` (Production). Nunca al repositorio.
-3. Comprobar `https://www.lotbot.es/api/v1/public-key` → `"ok": true`.
-4. Crear las licencias de los clientes actuales en `/admin/licencias`.
-5. Pegar la **pública** en `EMBEDDED_PUBLIC_KEYS` (`lot_bot/licensing/config.py`)
-   y publicar la versión. Desde ese momento se exige licencia con Wallapop real.
+Antes de publicarla a los clientes (rama `estable`):
+
+1. Crear en `/admin/licencias` la licencia de cada cliente actual (o que se
+   creen la cuenta en `/cuenta/registro` y se suscriban; marcar a los actuales
+   como «Fundador» en `/admin/clientes` para el precio especial).
+2. Enviarles su clave: al abrir LOT Bot aparece la pantalla de activación.
+
+Si algún día hay que cambiar de clave: generar otra, añadir la nueva pública a
+`EMBEDDED_PUBLIC_KEYS` (se admiten varias), publicar esa versión y solo después
+cambiar `LICENSE_SIGNING_KEY` en Vercel.
 
 En el programa instalado (ejecutable) no se puede cambiar la clave pública ni
 el servidor con variables de entorno. Desde el código fuente sí, para pruebas:
