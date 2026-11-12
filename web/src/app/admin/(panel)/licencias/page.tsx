@@ -6,7 +6,7 @@ import {
   createLicenseAction,
   extendLicenseAction,
   resetDevicesAction,
-  toggleLicenseAction,
+  setLicenseStatusAction,
 } from "../../actions";
 import Flash from "../Flash";
 
@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 
 type Row = {
   id: number; key: string; kind: string; status: string; expires_at: Date | null; max_devices: number;
-  notes: string; created_at: Date; email: string | null; name: string | null; plan_name: string | null;
+  notes: string; status_reason: string; created_at: Date; email: string | null; name: string | null; plan_name: string | null;
   devices: number; last_seen: Date | null;
 };
 
@@ -24,8 +24,8 @@ export default async function LicensesPage({ searchParams }: { searchParams: Pro
   const like = `%${q.trim().toLowerCase()}%`;
   const rows = await sql<Row[]>`
     SELECT l.*, c.email, c.name, p.name AS plan_name,
-      (SELECT count(*)::int FROM license_devices d WHERE d.license_id = l.id) AS devices,
-      (SELECT max(last_seen) FROM license_devices d WHERE d.license_id = l.id) AS last_seen
+      (SELECT count(*)::int FROM devices d WHERE d.license_id = l.id AND d.status = 'activo') AS devices,
+      (SELECT max(last_seen) FROM devices d WHERE d.license_id = l.id) AS last_seen
     FROM licenses l
     LEFT JOIN customers c ON c.id = l.customer_id
     LEFT JOIN plans p ON p.id = l.plan_id
@@ -86,8 +86,9 @@ export default async function LicensesPage({ searchParams }: { searchParams: Pro
                   <td>{l.expires_at ? formatDate(l.expires_at) : "Nunca"}</td>
                   <td>
                     <span className={`badge ${l.status !== "activa" ? "danger" : expired ? "off" : "ok"}`}>
-                      {l.status !== "activa" ? "desactivada" : expired ? "caducada" : "activa"}
+                      {l.status !== "activa" ? l.status : expired ? "caducada" : "activa"}
                     </span>
+                    {l.status_reason && <><br /><span className="faint">{l.status_reason}</span></>}
                   </td>
                   <td>{l.devices}/{l.max_devices}{l.last_seen && <><br /><span className="faint">visto {formatDate(l.last_seen)}</span></>}</td>
                   <td>
@@ -97,14 +98,31 @@ export default async function LicensesPage({ searchParams }: { searchParams: Pro
                         <input name="days" defaultValue="30" inputMode="numeric" style={{ width: 64, padding: "6px 8px" }} aria-label="Días" />
                         <button className="btn small">+ días</button>
                       </form>
-                      <form action={toggleLicenseAction}>
-                        <input type="hidden" name="id" value={l.id} />
-                        <button className={`btn small${l.status === "activa" ? " danger" : ""}`}>{l.status === "activa" ? "Desactivar" : "Activar"}</button>
-                      </form>
+                      {l.status === "activa" ? (
+                        <>
+                          <form action={setLicenseStatusAction} style={{ display: "flex", gap: 6 }}>
+                            <input type="hidden" name="id" value={l.id} />
+                            <input type="hidden" name="status" value="suspendida" />
+                            <input name="reason" placeholder="Motivo" style={{ width: 120, padding: "6px 8px" }} aria-label="Motivo de la suspensión" />
+                            <button className="btn small danger">Suspender</button>
+                          </form>
+                          <form action={setLicenseStatusAction}>
+                            <input type="hidden" name="id" value={l.id} />
+                            <input type="hidden" name="status" value="revocada" />
+                            <button className="btn small danger" title="Definitiva">Revocar</button>
+                          </form>
+                        </>
+                      ) : (
+                        <form action={setLicenseStatusAction}>
+                          <input type="hidden" name="id" value={l.id} />
+                          <input type="hidden" name="status" value="activa" />
+                          <button className="btn small">Reactivar</button>
+                        </form>
+                      )}
                       {l.devices > 0 && (
                         <form action={resetDevicesAction}>
                           <input type="hidden" name="id" value={l.id} />
-                          <button className="btn small" title="Para cambiar de ordenador">Reiniciar ordenadores</button>
+                          <button className="btn small" title="Para cambiar de ordenador">Desvincular ordenadores</button>
                         </form>
                       )}
                     </div>

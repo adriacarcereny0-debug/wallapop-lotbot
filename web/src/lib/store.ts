@@ -105,7 +105,7 @@ export type License = {
   customer_id: number | null;
   kind: "prueba" | "pago" | "manual";
   plan_id: number | null;
-  status: "activa" | "revocada";
+  status: "activa" | "suspendida" | "revocada";
   starts_at: Date;
   expires_at: Date | null;
   max_devices: number;
@@ -151,12 +151,12 @@ export type VerifyResult = {
 };
 
 /**
- * Comprueba una licencia desde LOT Bot. Registra el ordenador
- * (`deviceId`) hasta el máximo de la licencia.
+ * Comprobación sencilla (versión antigua de la API, sin pase firmado). Usa
+ * las mismas reglas que /api/v1: estado, caducidad y ordenadores.
  */
 export async function verifyLicense(key: string, deviceId: string): Promise<VerifyResult> {
   const sql = await db();
-  const rows = await sql<(License & { plan_name: string | null })[]>`
+  const rows = await sql<(License & { plan_name: string | null; status_reason: string })[]>`
     SELECT l.*, p.name AS plan_name FROM licenses l
     LEFT JOIN plans p ON p.id = l.plan_id
     WHERE l.key = ${key.trim().toUpperCase()}
@@ -168,24 +168,29 @@ export async function verifyLicense(key: string, deviceId: string): Promise<Veri
     plan: license.plan_name,
     expiresAt: license.expires_at ? new Date(license.expires_at).toISOString() : null,
   };
-  if (license.status !== "activa") return { ...base, valid: false, reason: "Licencia desactivada." };
+  if (license.status === "revocada") return { ...base, valid: false, reason: "Licencia revocada." };
+  if (license.status === "suspendida") return { ...base, valid: false, reason: "Licencia suspendida." };
   if (license.expires_at && new Date(license.expires_at) < new Date()) {
     return { ...base, valid: false, reason: license.kind === "prueba" ? "La prueba gratis ha terminado." : "La licencia ha caducado." };
   }
   if (deviceId) {
-    const known = await sql`
-      SELECT 1 FROM license_devices WHERE license_id = ${license.id} AND device_id = ${deviceId}
+    const [device] = await sql<{ status: string }[]>`
+      SELECT status FROM devices WHERE license_id = ${license.id} AND fingerprint = ${deviceId}
     `;
-    if (known.length) {
-      await sql`UPDATE license_devices SET last_seen = now() WHERE license_id = ${license.id} AND device_id = ${deviceId}`;
+    if (device?.status === "bloqueado") return { ...base, valid: false, reason: "Ordenador bloqueado." };
+    if (device?.status === "activo") {
+      await sql`UPDATE devices SET last_seen = now() WHERE license_id = ${license.id} AND fingerprint = ${deviceId}`;
     } else {
       const [{ count }] = await sql<{ count: number }[]>`
-        SELECT count(*)::int AS count FROM license_devices WHERE license_id = ${license.id}
+        SELECT count(*)::int AS count FROM devices WHERE license_id = ${license.id} AND status = 'activo'
       `;
       if (count >= license.max_devices) {
         return { ...base, valid: false, reason: `Esta licencia ya se usa en ${count} ordenador(es) (máximo ${license.max_devices}).` };
       }
-      await sql`INSERT INTO license_devices (license_id, device_id) VALUES (${license.id}, ${deviceId}) ON CONFLICT DO NOTHING`;
+      await sql`
+        INSERT INTO devices (license_id, fingerprint) VALUES (${license.id}, ${deviceId})
+        ON CONFLICT (license_id, fingerprint) DO UPDATE SET status = 'activo', last_seen = now()
+      `;
     }
   }
   return { ...base, valid: true };

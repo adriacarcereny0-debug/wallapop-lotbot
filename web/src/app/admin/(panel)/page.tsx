@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { db } from "@/lib/db";
+import { signingConfigured } from "@/lib/signing";
 import { allPaymentMethods, plansAreExamples, siteSettings, stripeConfigured } from "@/lib/store";
 import { formatDate, formatMoney } from "@/lib/util";
 
@@ -31,6 +32,10 @@ export default async function Dashboard() {
   const examples = await plansAreExamples();
   const usable = methods.filter((m) => m.enabled && (m.id === "tarjeta" ? stripeConfigured() : m.instructions.trim()));
   const todo = [
+    !signingConfigured() && {
+      text: "Falta LICENSE_SIGNING_KEY: LOT Bot no podrá activar licencias. Genera las claves (web/scripts/generar-claves.mjs) y ponla en Vercel.",
+      href: "/admin/licencias",
+    },
     examples && { text: "Los planes son de EJEMPLO: pon tus precios reales.", href: "/admin/planes" },
     usable.length === 0 && { text: "No hay ninguna forma de pago lista: activa al menos una.", href: "/admin/pagos" },
     methods.some((m) => m.id === "tarjeta" && m.enabled) && !stripeConfigured() && {

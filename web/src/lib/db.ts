@@ -55,8 +55,13 @@ export async function db(): Promise<Sql> {
   return sql;
 }
 
-async function ensureSchema(sql: Sql): Promise<void> {
-  await sql.unsafe(`
+/**
+ * Migraciones numeradas: cada una se aplica UNA vez, en orden, dentro de una
+ * transacción y con un bloqueo (dos servidores arrancando a la vez no
+ * migran dos veces). Para cambiar el esquema: añadir una nueva al final.
+ */
+const MIGRATIONS: { version: number; name: string; sql: string }[] = [
+  { version: 1, name: "esquema inicial", sql: `
     CREATE TABLE IF NOT EXISTS settings (
       key text PRIMARY KEY,
       value jsonb NOT NULL
@@ -151,9 +156,95 @@ async function ensureSchema(sql: Sql): Promise<void> {
       ip_hash text NOT NULL,
       at timestamptz NOT NULL DEFAULT now()
     );
-  `);
+  ` },
+  {
+    version: 2,
+    name: "licencias v2: dispositivos, estados, actividad y RLS",
+    sql: `
+    ALTER TABLE licenses DROP CONSTRAINT IF EXISTS licenses_status_check;
+    ALTER TABLE licenses ADD CONSTRAINT licenses_status_check
+      CHECK (status IN ('activa', 'suspendida', 'revocada'));
+    ALTER TABLE licenses ADD COLUMN IF NOT EXISTS status_reason text NOT NULL DEFAULT '';
+    ALTER TABLE licenses ADD COLUMN IF NOT EXISTS user_id uuid;
+    ALTER TABLE licenses ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+    CREATE INDEX IF NOT EXISTS licenses_customer ON licenses (customer_id);
+
+    CREATE TABLE IF NOT EXISTS devices (
+      id serial PRIMARY KEY,
+      license_id integer NOT NULL REFERENCES licenses(id) ON DELETE CASCADE,
+      fingerprint text NOT NULL,
+      name text NOT NULL DEFAULT '',
+      os text NOT NULL DEFAULT '',
+      app_version text NOT NULL DEFAULT '',
+      status text NOT NULL DEFAULT 'activo' CHECK (status IN ('activo', 'desvinculado', 'bloqueado')),
+      first_seen timestamptz NOT NULL DEFAULT now(),
+      last_seen timestamptz NOT NULL DEFAULT now(),
+      last_ip_hash text NOT NULL DEFAULT '',
+      UNIQUE (license_id, fingerprint)
+    );
+    CREATE INDEX IF NOT EXISTS devices_fingerprint ON devices (fingerprint);
+    INSERT INTO devices (license_id, fingerprint, first_seen, last_seen)
+      SELECT license_id, device_id, first_seen, last_seen FROM license_devices
+      ON CONFLICT DO NOTHING;
+    DROP TABLE IF EXISTS license_devices;
+
+    CREATE TABLE IF NOT EXISTS license_events (
+      id bigserial PRIMARY KEY,
+      at timestamptz NOT NULL DEFAULT now(),
+      license_id integer REFERENCES licenses(id) ON DELETE CASCADE,
+      kind text NOT NULL,
+      fingerprint text NOT NULL DEFAULT '',
+      ip_hash text NOT NULL DEFAULT '',
+      detail text NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS license_events_license ON license_events (license_id, at);
+    CREATE INDEX IF NOT EXISTS license_events_ip ON license_events (ip_hash, kind, at);
+
+    -- Supabase publica las tablas de «public» por su API: con RLS activado y
+    -- sin políticas, nadie puede leerlas desde fuera. Este servidor se conecta
+    -- con el usuario propietario y no se ve afectado.
+    ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE plans ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE payment_methods ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE licenses ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE devices ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE trials ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE events ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE login_attempts ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE license_events ENABLE ROW LEVEL SECURITY;
+    `,
+  },
+];
+
+/** Número de bloqueo para las migraciones (cualquiera fijo). */
+const MIGRATION_LOCK = 7_147_656_764;
+
+async function ensureSchema(sql: Sql): Promise<void> {
+  await sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(${MIGRATION_LOCK})`;
+    await tx.unsafe(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version integer PRIMARY KEY,
+        name text NOT NULL,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      );
+      ALTER TABLE schema_migrations ENABLE ROW LEVEL SECURITY;
+    `);
+    const done = new Set(
+      (await tx<{ version: number }[]>`SELECT version FROM schema_migrations`).map((r) => r.version),
+    );
+    for (const migration of MIGRATIONS) {
+      if (done.has(migration.version)) continue;
+      await tx.unsafe(migration.sql);
+      await tx`INSERT INTO schema_migrations (version, name) VALUES (${migration.version}, ${migration.name})`;
+    }
+  });
   await seed(sql);
 }
+
+export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
 
 /** Datos de partida (solo si las tablas están vacías). Todo se cambia en /admin. */
 async function seed(sql: Sql): Promise<void> {
@@ -169,19 +260,14 @@ async function seed(sql: Sql): Promise<void> {
     await sql`
       INSERT INTO plans ${sql([
         {
-          slug: "mensual", name: "Mensual", description: "Pago mes a mes, sin permanencia.",
+          slug: "mensual", name: "Mensual", description: "Suscripción mes a mes, sin permanencia.",
           price_cents: 2900, period_label: "mes", duration_days: 30, max_devices: 1,
-          features: sql.json(base), highlighted: false, sort: 1,
-        },
-        {
-          slug: "trimestral", name: "Trimestral", description: "Tres meses con descuento.",
-          price_cents: 7900, period_label: "3 meses", duration_days: 90, max_devices: 1,
-          features: sql.json(base), highlighted: true, sort: 2,
+          features: sql.json([...base, "1 ordenador"]), highlighted: false, sort: 1,
         },
         {
           slug: "anual", name: "Anual", description: "Un año completo al mejor precio.",
           price_cents: 24900, period_label: "año", duration_days: 365, max_devices: 2,
-          features: sql.json([...base, "Hasta 2 ordenadores"]), highlighted: false, sort: 3,
+          features: sql.json([...base, "Hasta 2 ordenadores"]), highlighted: true, sort: 2,
         },
       ])}
     `;

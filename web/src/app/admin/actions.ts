@@ -101,24 +101,51 @@ export async function extendLicenseAction(form: FormData): Promise<void> {
   back("/admin/licencias", `Ampliada ${days} días.`);
 }
 
-export async function toggleLicenseAction(form: FormData): Promise<void> {
+/** Cambia el estado: activa, suspendida (con motivo, reversible) o revocada (definitiva). */
+export async function setLicenseStatusAction(form: FormData): Promise<void> {
   await requireAdmin();
+  const status = cleanText(form.get("status"), 20);
+  if (!["activa", "suspendida", "revocada"].includes(status)) back("/admin/licencias");
+  const reason = status === "activa" ? "" : cleanText(form.get("reason"), 200);
   const sql = await db();
-  const rows = await sql<{ key: string; status: string }[]>`
-    UPDATE licenses SET status = CASE WHEN status = 'activa' THEN 'revocada' ELSE 'activa' END
-    WHERE id = ${num(form.get("id"))} RETURNING key, status
+  const rows = await sql<{ key: string }[]>`
+    UPDATE licenses SET status = ${status}, status_reason = ${reason}, updated_at = now()
+    WHERE id = ${num(form.get("id"))} RETURNING key
   `;
-  if (rows.length) await logEvent(`Licencia ${rows[0].status}`, rows[0].key, "admin");
-  back("/admin/licencias", rows.length ? `Licencia ${rows[0].status}.` : undefined);
+  if (rows.length) {
+    await logEvent(`Licencia ${status}`, `${rows[0].key}${reason ? ` · ${reason}` : ""}`, "admin");
+  }
+  const label = { activa: "activada", suspendida: "suspendida", revocada: "revocada" }[status];
+  back(
+    cleanText(form.get("back"), 200) || "/admin/licencias",
+    rows.length ? `Licencia ${label}. LOT Bot lo aplica en su próxima comprobación (como mucho, al caducar su pase de 72 h).` : undefined,
+  );
 }
 
 export async function resetDevicesAction(form: FormData): Promise<void> {
   await requireAdmin();
   const sql = await db();
   const id = num(form.get("id"));
-  await sql`DELETE FROM license_devices WHERE license_id = ${id}`;
-  await logEvent("Ordenadores de la licencia reiniciados", String(id), "admin");
-  back("/admin/licencias", "Ordenadores reiniciados: podrá activarse en uno nuevo.");
+  await sql`UPDATE devices SET status = 'desvinculado' WHERE license_id = ${id} AND status = 'activo'`;
+  await logEvent("Ordenadores de la licencia desvinculados", String(id), "admin");
+  back("/admin/licencias", "Ordenadores desvinculados: podrá activarse en uno nuevo.");
+}
+
+/** Dispositivo: desvincular (libera la plaza), bloquear o desbloquear. */
+export async function setDeviceStatusAction(form: FormData): Promise<void> {
+  await requireAdmin();
+  const status = cleanText(form.get("status"), 20);
+  if (!["activo", "desvinculado", "bloqueado"].includes(status)) back("/admin/dispositivos");
+  const sql = await db();
+  const rows = await sql<{ fingerprint: string; key: string }[]>`
+    UPDATE devices d SET status = ${status} FROM licenses l
+    WHERE d.id = ${num(form.get("id"))} AND l.id = d.license_id
+    RETURNING d.fingerprint, l.key
+  `;
+  if (rows.length) {
+    await logEvent(`Dispositivo ${status}`, `${rows[0].key} · ${rows[0].fingerprint.slice(0, 12)}…`, "admin");
+  }
+  back("/admin/dispositivos", rows.length ? `Dispositivo ${status}.` : undefined);
 }
 
 // --- Pruebas gratis ---------------------------------------------------------

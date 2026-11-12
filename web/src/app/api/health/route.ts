@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { db, hasDatabase } from "@/lib/db";
+import { SCHEMA_VERSION, db, hasDatabase } from "@/lib/db";
+import { currentKeyId, signingConfigured } from "@/lib/signing";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +10,12 @@ export async function GET() {
   try {
     const sql = await db();
     await sql`SELECT 1`;
-    return NextResponse.json({ ok: true, database: "conectada" });
+    return NextResponse.json({
+      ok: true,
+      database: "conectada",
+      schema: SCHEMA_VERSION,
+      licensing: signingConfigured() ? { signing: "configurada", kid: currentKeyId() } : { signing: "falta" },
+    });
   } catch {
     return NextResponse.json({ ok: false, database: "error" }, { status: 503 });
   }
