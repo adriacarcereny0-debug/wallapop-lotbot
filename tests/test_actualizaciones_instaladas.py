@@ -8,6 +8,7 @@ import hashlib
 import json
 import random
 import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -224,6 +225,7 @@ def test_mac_lanza_el_guion_que_sustituye_la_app(env, tmp_path):
     assert "codesign --verify" in script and "hdiutil attach" in script
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="El guion es de Mac; en Windows no hay bash real.")
 def test_el_guion_de_mac_es_bash_valido():
     checked = subprocess.run(["bash", "-n"], input=MAC_INSTALL_SCRIPT, text=True, capture_output=True)
     assert checked.returncode == 0, checked.stderr
@@ -232,7 +234,8 @@ def test_el_guion_de_mac_es_bash_valido():
 def test_utilidades():
     assert version_tuple("1.10.0") > version_tuple("1.9.9")
     assert current_platform() in (None, "windows-x64", "mac-arm64", "mac-intel")
-    assert mac_app_bundle("/Applications/LOT Bot.app/Contents/MacOS/LOT-Bot") == Path("/Applications/LOT Bot.app")
+    bundle = mac_app_bundle("/Applications/LOT Bot.app/Contents/MacOS/LOT-Bot")
+    assert bundle is not None and bundle.name == "LOT Bot.app" and bundle.parent.name == "Applications"
     assert mac_app_bundle("/usr/bin/python3") is None
 
 
