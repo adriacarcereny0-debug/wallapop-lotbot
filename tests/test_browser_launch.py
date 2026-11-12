@@ -5,6 +5,7 @@ datos sensibles y flujo de inicio de sesión que nunca da un falso «conectada»
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -256,6 +257,11 @@ def test_redireccion_al_login_no_conecta(profiles, tmp_path):
 # ---------------------------------------------------------------------------
 # Detección de Chrome / Edge en macOS
 # ---------------------------------------------------------------------------
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Simula rutas POSIX de macOS (/Applications); en Windows serían D:\\... "
+    "Se ejecuta en el CI de Mac.",
+)
 def test_detecta_chrome_y_edge_instalados_en_mac():
     instalados = {
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",

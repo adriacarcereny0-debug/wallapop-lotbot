@@ -5,11 +5,18 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from lot_bot.config import paths
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Simula rutas POSIX de macOS (/Applications); en Windows serían D:\\... "
+    "Se ejecuta en el CI de Mac.",
+)
 def test_app_dir_en_el_app_de_mac_es_la_carpeta_que_lo_contiene(monkeypatch):
     exe = "/Applications/LOT Bot.app/Contents/MacOS/LOT-Bot"
     monkeypatch.setattr(sys, "frozen", True, raising=False)
