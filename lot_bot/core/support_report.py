@@ -64,6 +64,19 @@ def _system_info(app: Application) -> str:
             lines.append(f"Versión instalada: {updater.current_version()}")
         except Exception:
             pass
+    manager = getattr(app, "license", None)
+    if manager is not None:
+        try:
+            status = manager.status()
+            lines.append(
+                f"Licencia: {status.state.value}"
+                + (f" · n.º {status.license_id}" if status.license_id else "")
+                + (f" · {status.key_masked}" if status.key_masked else "")
+                + (f" · {status.code}" if status.code else "")
+                + (f" · ordenador {manager.device.fingerprint[:12]}" if status.enforced else "")
+            )
+        except Exception:
+            pass
     lines += [
         f"Sistema: {platform.system()} {platform.release()} ({platform.machine()})",
         f"Python: {sys.version.split()[0]}",

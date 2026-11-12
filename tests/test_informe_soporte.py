@@ -50,3 +50,27 @@ def test_por_defecto_va_al_escritorio(monkeypatch, tmp_path):
     (tmp_path / "Desktop").mkdir()
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
     assert support_report.default_folder() == tmp_path / "Desktop"
+
+
+def test_el_informe_lleva_el_numero_de_licencia_pero_no_la_clave(app_with_data, tmp_path, temp_paths):
+    import random
+
+    from lot_bot.licensing.config import LicenseConfig
+    from lot_bot.licensing.manager import LicenseManager
+    from tests.test_licencias import DEVICE, KEY, T0, FakeServer, Signer
+
+    clock = [T0]
+    signer = Signer()
+    manager = LicenseManager(
+        temp_paths.config,
+        config=LicenseConfig("https://licencias.test", (signer.public_raw,)),
+        client=FakeServer(signer, clock), device=DEVICE, clock=lambda: clock[0], rng=random.Random(1),
+    )
+    assert manager.activate(KEY).ok
+    app_with_data.license = manager
+    zip_path = build_report(app_with_data, "prueba", tmp_path)
+    with zipfile.ZipFile(zip_path) as zf:
+        sistema = zf.read("sistema.txt").decode("utf-8")
+    assert "Licencia: activa · n.º 7" in sistema
+    assert "LOTB-••••-••••-EF56" in sistema
+    assert KEY not in sistema

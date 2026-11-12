@@ -120,6 +120,8 @@ class LicenseStatus:
     lease_expires_at: datetime | None = None
     last_success: datetime | None = None
     offline: bool = False
+    #: Número de licencia en el servidor (sale en el informe de soporte).
+    license_id: int | None = None
 
     @property
     def allowed(self) -> bool:
@@ -265,6 +267,7 @@ class LicenseManager:
             return blocked("LEASE_INVALID")
 
         extra = {
+            "license_id": lease.license_id,
             "kind": lease.kind,
             "plan": lease.plan,
             "seats": lease.seats,

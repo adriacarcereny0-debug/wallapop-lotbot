@@ -388,6 +388,13 @@ def create_application(
         app.publish_queue.start_worker()
         # Renovar el pase de licencia en segundo plano (si esta versión la exige).
         license_manager.start_background()
+    _status = license_manager.status()
+    logger.info(
+        "Licencia: %s%s%s",
+        _status.state.value,
+        f" · n.º {_status.license_id}" if _status.license_id else "",
+        f" · {_status.key_masked}" if _status.key_masked else "",
+    )
 
     seed_business_from_env(app)
 
