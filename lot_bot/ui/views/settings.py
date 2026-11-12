@@ -709,7 +709,15 @@ class SettingsView(BaseView):
                 f"Versión instalada: {updater.current_version()}.<br>"
                 "LOT Bot mira solo si hay versiones nuevas al abrirse y cada pocas horas; "
                 "cuando hay una, sale un aviso arriba con el botón «Actualizar»."
+                + (
+                    ""
+                    if getattr(updater, "restarts_itself", False)
+                    else "<br><br><b>Recomendado:</b> instala la versión para clientes desde "
+                    "<a href='https://www.lotbot.es/cuenta'>Mi cuenta → Descargar LOT Bot</a>. "
+                    "Tus cuentas, anuncios, fotos y ajustes se mantienen (están en tu carpeta de datos)."
+                )
             )
+            self.version_label.setOpenExternalLinks(True)
             self.rollback_button.setEnabled(bool(updater.previous_version()))
         else:
             reason = updater.unsupported_reason() if updater is not None else ""

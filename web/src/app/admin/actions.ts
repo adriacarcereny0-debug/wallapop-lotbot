@@ -165,6 +165,54 @@ export async function setFounderAction(form: FormData): Promise<void> {
   back("/admin/clientes", founder ? "Marcado como fundador: pagará el precio de fundador al suscribirse." : "Ya no es fundador.");
 }
 
+export async function setBetaAction(form: FormData): Promise<void> {
+  await requireAdmin();
+  const sql = await db();
+  const beta = form.get("beta") === "1";
+  const rows = await sql<{ email: string }[]>`
+    UPDATE lotbot.customers SET beta = ${beta} WHERE id = ${num(form.get("id"))} RETURNING email
+  `;
+  if (rows.length) await logEvent(beta ? "Cliente en canal beta" : "Cliente fuera del canal beta", rows[0].email, "admin");
+  back("/admin/clientes", beta ? "Recibirá también las versiones beta." : "Solo recibirá versiones estables.");
+}
+
+/** Alta de los clientes actuales: fundador + licencia + mensaje para enviar. */
+export async function launchImportAction(form: FormData): Promise<void> {
+  await requireAdmin();
+  const sql = await db();
+  const planSlug = cleanText(form.get("plan"), 40);
+  const [plan] = await sql<{ id: number; max_devices: number; name: string }[]>`
+    SELECT id, max_devices, name FROM lotbot.plans WHERE slug = ${planSlug}`;
+  const days = Math.max(1, Math.min(3650, Math.round(num(form.get("days"), 30) ?? 30)));
+  const lines = String(form.get("clients") ?? "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 200);
+  let created = 0;
+  const problems: string[] = [];
+  for (const line of lines) {
+    const [rawEmail, ...rest] = line.split(/[;,\t]/);
+    const email = cleanEmail(rawEmail);
+    if (!email) {
+      problems.push(line);
+      continue;
+    }
+    const customerId = await upsertCustomer(email, cleanText(rest.join(" "), 120));
+    await sql`UPDATE lotbot.customers SET founder = true WHERE id = ${customerId}`;
+    const existing = await sql`
+      SELECT 1 FROM lotbot.licenses WHERE customer_id = ${customerId} AND notes = 'Lanzamiento (cliente fundador)'`;
+    if (existing.length) continue; // ya importado: no se duplica
+    await issueLicense({
+      customerId, kind: "manual", planId: plan?.id ?? null, durationDays: days,
+      maxDevices: plan?.max_devices ?? 1, notes: "Lanzamiento (cliente fundador)",
+    });
+    created++;
+  }
+  await logEvent("Alta de clientes fundadores", `${created} licencias (${days} días)`, "admin");
+  back(
+    "/admin/lanzamiento",
+    `${created} licencia${created === 1 ? "" : "s"} creada${created === 1 ? "" : "s"}.` +
+      (problems.length ? ` ⚠ Líneas sin email válido: ${problems.slice(0, 5).join(" | ")}` : ""),
+  );
+}
+
 /** Enlace de un solo uso (48 h) para que el cliente ponga o cambie su contraseña. */
 export async function passwordLinkAction(form: FormData): Promise<void> {
   await requireAdmin();

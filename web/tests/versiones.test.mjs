@@ -178,6 +178,19 @@ test("el canal beta solo lo recibe quien lo pide; cada plataforma recibe la suya
   assert.notEqual((await check(device, base, { platform: "windows-x64", channel: "beta" })).data.update?.version, version);
 });
 
+test("un cliente marcado como beta recibe las versiones beta sin pedirlas", async () => {
+  const device = await activeDevice();
+  const version = nextVersion();
+  const base = `${major}.${minor - 1}.9`;
+  await register({ version, channel: "beta", assets: [asset("windows-x64", version)] });
+  assert.notEqual((await check(device, base)).data.update?.version, version);
+  const [{ id }] = await sql`
+    INSERT INTO lotbot.customers (email, email_normalized) VALUES (${`beta-${randomUUID().slice(0, 8)}@pruebas.es`}, 'x') RETURNING id`;
+  await sql`UPDATE lotbot.customers SET beta = true WHERE id = ${id}`;
+  await sql`UPDATE lotbot.licenses SET customer_id = ${id} WHERE key = ${device.key}`;
+  assert.equal((await check(device, base)).data.update?.version, version);
+});
+
 test("/admin/versiones pide contraseña", async () => {
   const response = await fetch(`${BASE}/admin/versiones`, { redirect: "manual" });
   assert.ok([302, 303, 307].includes(response.status));

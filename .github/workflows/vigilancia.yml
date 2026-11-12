@@ -1,0 +1,46 @@
+# Vigilancia de la web y del servidor de licencias, cada hora.
+# Si algo falla, el flujo sale en rojo y GitHub te avisa por email
+# (Settings → Notifications → Actions: «Send notifications for failed workflows»).
+name: Vigilancia
+
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  comprobar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SITE: ${{ vars.LOTBOT_SITE_URL || 'https://www.lotbot.es' }}
+    steps:
+      - name: La web responde y la base de datos está conectada
+        run: |
+          BODY=$(curl -sS --retry 3 --retry-delay 10 -m 30 "$SITE/api/health")
+          echo "$BODY"
+          echo "$BODY" | grep -q '"ok":true' || { echo "::error::La web o la base de datos no responden"; exit 1; }
+          echo "$BODY" | grep -q '"signing":"configurada"' || { echo "::error::Falta la clave de firma de licencias"; exit 1; }
+      - name: La clave pública es la que lleva LOT Bot
+        run: |
+          KEY=$(curl -sS --retry 3 -m 30 "$SITE/api/v1/public-key")
+          echo "$KEY"
+          echo "$KEY" | grep -q '"kid":"f9607729"' || { echo "::error::La clave de firma ha cambiado: LOT Bot no aceptará los pases"; exit 1; }
+      - name: Las licencias contestan
+        # Petición incompleta a propósito: se responde sin tocar ninguna licencia
+        # (y no cuenta como «clave inventada» en las alertas).
+        run: |
+          CODE=$(curl -sS -o /tmp/r.json -w "%{http_code}" -m 30 -X POST "$SITE/api/v1/license/refresh" \
+            -H "Content-Type: application/json" -d '{"key":"vigilancia","device":{"fingerprint":"x"}}')
+          cat /tmp/r.json; echo
+          [ "$CODE" = "400" ] && grep -q INVALID_REQUEST /tmp/r.json || { echo "::error::El servidor de licencias no responde bien ($CODE)"; exit 1; }
+      - name: Páginas principales
+        run: |
+          for path in / /cuenta/entrar /prueba /terminos; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -m 30 "$SITE$path")
+            echo "$path → $code"
+            [ "$code" = "200" ] || { echo "::error::$path devuelve $code"; exit 1; }
+          done

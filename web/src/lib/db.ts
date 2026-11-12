@@ -346,6 +346,13 @@ const MIGRATIONS: { version: number; name: string; sql: string }[] = [
     ALTER TABLE lotbot.devices ADD COLUMN IF NOT EXISTS integrity_detail text NOT NULL DEFAULT '';
     `,
   },
+  {
+    version: 7,
+    name: "clientes de prueba (canal beta)",
+    sql: `
+    ALTER TABLE lotbot.customers ADD COLUMN IF NOT EXISTS beta boolean NOT NULL DEFAULT false;
+    `,
+  },
 ];
 
 /** Número de bloqueo para las migraciones (cualquiera fijo). */

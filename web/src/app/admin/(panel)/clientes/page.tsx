@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { formatDate, formatMoney } from "@/lib/util";
 
-import { passwordLinkAction, setFounderAction } from "../../actions";
+import { passwordLinkAction, setBetaAction, setFounderAction } from "../../actions";
 import Flash from "../Flash";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 type Row = {
   id: number; email: string; name: string; phone: string; created_at: Date;
   paid_cents: number; orders: number; active_license: boolean; trial: boolean;
-  founder: boolean; has_account: boolean; subscription: string | null;
+  founder: boolean; beta: boolean; has_account: boolean; subscription: string | null;
 };
 
 export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; ok?: string }> }) {
@@ -17,7 +17,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const sql = await db();
   const like = `%${q.trim().toLowerCase()}%`;
   const rows = await sql<Row[]>`
-    SELECT c.id, c.email, c.name, c.phone, c.created_at, c.founder, c.password_hash IS NOT NULL AS has_account,
+    SELECT c.id, c.email, c.name, c.phone, c.created_at, c.founder, c.beta, c.password_hash IS NOT NULL AS has_account,
       (SELECT s.status FROM lotbot.subscriptions s WHERE s.customer_id = c.id ORDER BY s.id DESC LIMIT 1) AS subscription,
       COALESCE((SELECT sum(amount_cents) FROM lotbot.orders o WHERE o.customer_id = c.id AND o.status = 'pagado'), 0)::int AS paid_cents,
       (SELECT count(*)::int FROM lotbot.orders o WHERE o.customer_id = c.id) AS orders,
@@ -62,6 +62,11 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                       <input type="hidden" name="id" value={c.id} />
                       <input type="hidden" name="founder" value={c.founder ? "0" : "1"} />
                       <button className="btn small">{c.founder ? "★ Fundador (quitar)" : "Marcar fundador"}</button>
+                    </form>
+                    <form action={setBetaAction}>
+                      <input type="hidden" name="id" value={c.id} />
+                      <input type="hidden" name="beta" value={c.beta ? "0" : "1"} />
+                      <button className="btn small">{c.beta ? "β Beta (quitar)" : "Beta"}</button>
                     </form>
                     <form action={passwordLinkAction}>
                       <input type="hidden" name="id" value={c.id} />

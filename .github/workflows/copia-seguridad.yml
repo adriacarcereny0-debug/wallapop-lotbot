@@ -1,0 +1,65 @@
+# Copia de seguridad diaria de la base de datos de LOT Bot (solo el esquema
+# «lotbot»: clientes, licencias, suscripciones, versiones…; nada del CRM).
+#
+# Se guarda CIFRADA (AES-256) como artefacto de GitHub durante 30 días.
+# Secretos (Settings → Secrets → Actions):
+#   BACKUP_DATABASE_URL   cadena de conexión de Neon/Supabase (puede ser de solo lectura)
+#   BACKUP_PASSPHRASE     contraseña larga para cifrar (guárdala también en tu gestor)
+#
+# Restaurar (en tu ordenador):
+#   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in lotbot-AAAAMMDD.sql.gz.enc \
+#     -pass pass:'TU_CONTRASEÑA' | gunzip | psql "$DATABASE_URL_DESTINO"
+name: Copia de seguridad
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # cada día a las 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  copia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+    steps:
+      - name: Comprobar configuración
+        id: cfg
+        run: |
+          if [ -z "$BACKUP_DATABASE_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::warning::Faltan BACKUP_DATABASE_URL o BACKUP_PASSPHRASE: no se hace copia."
+            echo "listo=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "listo=si" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Cliente de PostgreSQL 17
+        if: steps.cfg.outputs.listo == 'si'
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
+      - name: Copiar y cifrar
+        if: steps.cfg.outputs.listo == 'si'
+        run: |
+          FILE="lotbot-$(date -u +%Y%m%d).sql.gz.enc"
+          /usr/lib/postgresql/17/bin/pg_dump "$BACKUP_DATABASE_URL" --schema=lotbot --no-owner --no-privileges \
+            | gzip -9 \
+            | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BACKUP_PASSPHRASE -out "$FILE"
+          SIZE=$(stat -c %s "$FILE")
+          [ "$SIZE" -gt 1000 ] || { echo "::error::La copia ha salido vacía ($SIZE bytes)"; exit 1; }
+          # Comprobación: se puede descifrar y trae las tablas de licencias.
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BACKUP_PASSPHRASE -in "$FILE" | gunzip | grep -q "CREATE TABLE lotbot.licenses"
+          echo "Copia $FILE: $SIZE bytes, verificada."
+          echo "FILE=$FILE" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        if: steps.cfg.outputs.listo == 'si'
+        with:
+          name: ${{ env.FILE }}
+          path: ${{ env.FILE }}
+          retention-days: 30
+          if-no-files-found: error

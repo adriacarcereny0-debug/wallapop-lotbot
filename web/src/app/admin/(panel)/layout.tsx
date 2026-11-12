@@ -9,6 +9,7 @@ export const metadata = { robots: { index: false, follow: false } };
 
 const LINKS = [
   ["/admin", "Resumen"],
+  ["/admin/lanzamiento", "Lanzamiento"],
   ["/admin/suscripciones", "Suscripciones"],
   ["/admin/pedidos", "Pedidos"],
   ["/admin/licencias", "Licencias"],
