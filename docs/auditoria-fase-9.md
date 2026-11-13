@@ -53,7 +53,24 @@ desde `claude/funny-ritchie-rokcir`; las ramas nuevas solo crean vistas previas)
 
 ---
 
-## 5. Pruebas ejecutadas (resultados reales)
+## 5. Problema encontrado al probar (corregido)
 
-Ver la entrega final de la fase (resumen al usuario) para las cifras exactas de
-esta ejecución.
+| # | Problema | Corrección |
+|---|---|---|
+| P1 | Prueba intermitente en Windows (`test_foto_propia_como_referencia`). **Causa real** (medida): en DEMO, la edición «con foto de referencia» solo teñía y enmarcaba; con fotos lisas el **17,2 %** de las ediciones salían casi iguales a la de partida y la prueba fallaba ~0,5 % de las veces. | La edición dibuja un elemento con contraste en posición según la semilla: **0/400** iguales. Prueba de regresión con 450 ediciones. |
+
+## 6. Pruebas ejecutadas (resultados reales de esta fase)
+
+| Qué | Resultado |
+|---|---|
+| `npm audit` antes / después | 2 vulnerabilidades (1 crítica, 1 alta) → **0** |
+| `pip-audit` (entorno local) | 1 aviso en dependencia indirecta (`opentelemetry-api` 1.45.1); instalaciones nuevas ya traen 1.45.2 |
+| Batería de Python (todo menos el navegador real) | **695 pasadas, 13 omitidas, 0 fallos** (antes de la corrección P1) |
+| Omitidas | 10 de servidor de licencias real (ejecutadas aparte: **10/10**), 1 solo de Windows/Mac (en el CI), 2 largas/opcionales |
+| Nuevas de Python | primeros pasos (5), copia local (3), llavero (2), informe de arranque (1), imágenes DEMO (1) |
+| Web (Next.js + Postgres real) | **66/66** (incluye las nuevas de la API antigua y el freno) |
+| Compilación de la web | sin errores ni avisos |
+| Dos pasos al añadir `SESSION_SECRET` (servidor real, reinicio) | se entra y se recifra |
+| CI «Versión para clientes» (instalación limpia) | **Windows**: compilar, instalador, instalar sin admin, autoprueba, huella oficial, actualizar encima, desinstalar con datos intactos → correcto. **Mac Apple e Intel**: compilar, autoprueba, sustituir la app desde el .dmg → correcto |
+| CI «Pruebas Windows y Mac» (Python 3.11, toda la batería + autoprueba) | primer intento: 1 fallo en Windows (P1); tras corregirlo: **correcto en Windows y Mac** |
+| Prueba de navegador real | no ejecutada aquí (lentitud del contenedor; igual sin los cambios) |
