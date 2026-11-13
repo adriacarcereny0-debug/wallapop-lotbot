@@ -18,8 +18,8 @@ type Row = {
   devices: number; last_seen: Date | null;
 };
 
-export default async function LicensesPage({ searchParams }: { searchParams: Promise<{ q?: string; tipo?: string; ok?: string }> }) {
-  const { q = "", tipo = "", ok } = await searchParams;
+export default async function LicensesPage({ searchParams }: { searchParams: Promise<{ q?: string; tipo?: string; estado?: string; ok?: string }> }) {
+  const { q = "", tipo = "", estado = "", ok } = await searchParams;
   const sql = await db();
   const like = `%${q.trim().toLowerCase()}%`;
   const rows = await sql<Row[]>`
@@ -30,6 +30,10 @@ export default async function LicensesPage({ searchParams }: { searchParams: Pro
     LEFT JOIN lotbot.customers c ON c.id = l.customer_id
     LEFT JOIN lotbot.plans p ON p.id = l.plan_id
     WHERE (${tipo} = '' OR l.kind = ${tipo})
+      AND (${estado} = ''
+        OR (${estado} = 'activa' AND l.status = 'activa' AND (l.expires_at IS NULL OR l.expires_at > now()))
+        OR (${estado} = 'caducada' AND l.status = 'activa' AND l.expires_at <= now())
+        OR (${estado} IN ('suspendida', 'revocada') AND l.status = ${estado}))
       AND (${q.trim()} = '' OR lower(l.key) LIKE ${like} OR lower(c.email) LIKE ${like} OR lower(c.name) LIKE ${like})
     ORDER BY l.id DESC LIMIT 300
   `;
@@ -67,9 +71,17 @@ export default async function LicensesPage({ searchParams }: { searchParams: Pro
             <option value="prueba">Prueba</option><option value="manual">Manual</option>
           </select>
         </label>
+        <label>Estado
+          <select name="estado" defaultValue={estado}>
+            <option value="">Todos</option><option value="activa">Activas</option>
+            <option value="caducada">Caducadas</option><option value="suspendida">Suspendidas</option>
+            <option value="revocada">Revocadas</option>
+          </select>
+        </label>
         <label>Buscar<input name="q" defaultValue={q} placeholder="Clave, email o nombre" /></label>
         <button className="btn small">Filtrar</button>
       </form>
+      <p className="faint">{rows.length} licencia{rows.length === 1 ? "" : "s"}{rows.length === 300 ? " (las 300 más recientes)" : ""}. <a href={`/admin/historial?q=${encodeURIComponent(q)}`}>Ver historial de activaciones</a></p>
       <div className="table-wrap">
         <table>
           <thead>

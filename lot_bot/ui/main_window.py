@@ -267,6 +267,36 @@ class MainWindow(QMainWindow):
             "las publicaciones, precios y mensajes son de prueba."
         )
 
+    # ------------------------------------------------------------------
+    # Primeros pasos
+    # ------------------------------------------------------------------
+    def open_section(self, name: str, tab: str | None = None) -> None:
+        """Abre una pantalla por su nombre (y una pestaña si tiene)."""
+        from PySide6.QtWidgets import QTabWidget
+
+        for index, (label, _icon, _view) in enumerate(NAVIGATION):
+            if label == name:
+                self._go_to(index)
+                if tab:
+                    for tabs in self.views[index].findChildren(QTabWidget):
+                        for i in range(tabs.count()):
+                            if tabs.tabText(i) == tab:
+                                tabs.setCurrentIndex(i)
+                                return
+                return
+
+    def show_onboarding(self) -> None:
+        from lot_bot.ui.onboarding import OnboardingDialog
+
+        OnboardingDialog(self.app, self.open_section, self).exec()
+
+    def maybe_show_onboarding(self) -> None:
+        """Al abrir: la guía sale sola mientras falte algún paso (se puede quitar)."""
+        from lot_bot.ui.onboarding import should_show_at_start
+
+        if should_show_at_start(self.app):
+            self.show_onboarding()
+
     def refresh_current(self) -> None:
         self._on_page_changed(self.stack.currentIndex())
 

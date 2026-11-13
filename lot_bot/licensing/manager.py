@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
-from lot_bot.config.secrets import SecretsError, get_secret_box
+from lot_bot.config.secrets import SecretsError, get_secret_box, master_key_is_temporary
 from lot_bot.licensing.client import LicenseClient, ServerReply, TransientError
 from lot_bot.licensing.config import LicenseConfig, load_config
 from lot_bot.licensing.fingerprint import DeviceInfo, device_info
@@ -173,6 +173,11 @@ class LicenseManager:
         self.listeners: list[Callable[[LicenseStatus], None]] = []
         #: Resultado de comprobar la instalación (programa instalado), o None.
         self.integrity = None
+        #: La clave guardada no se ha podido descifrar (llavero que no responde).
+        self._key_unreadable = False
+        #: Clave activada en una sesión sin llavero: se usa sin guardarla cifrada
+        #: con una clave temporal (se perdería al reiniciar).
+        self._memory_key: str | None = None
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
@@ -189,12 +194,16 @@ class LicenseManager:
         return self.config.enforced
 
     def _key(self) -> str | None:
+        if self._memory_key:
+            return self._memory_key
         if not self._data.key_enc:
             return None
         try:
             return get_secret_box().decrypt(self._data.key_enc)
         except SecretsError:
-            logger.warning("No se puede leer la clave de licencia guardada: habrá que escribirla otra vez.")
+            if not self._key_unreadable:  # se avisa una vez, no en cada consulta
+                logger.warning("No se puede leer la clave de licencia guardada (¿llavero del sistema?).")
+            self._key_unreadable = True
             return None
 
     def stored_key(self) -> str | None:
@@ -226,10 +235,14 @@ class LicenseManager:
         data = self._data
         key = self._key()
         if not key:
-            return LicenseStatus(
-                LicenseState.NONE,
-                message="Activa tu licencia para publicar en Wallapop. El modo DEMO es gratis.",
-            )
+            message = "Activa tu licencia para publicar en Wallapop. El modo DEMO es gratis."
+            if self._key_unreadable:
+                message = (
+                    "No se ha podido leer la licencia guardada porque el llavero del sistema no "
+                    "responde. Cierra y vuelve a abrir LOT Bot (y permite el acceso al llavero); "
+                    "si sigue igual, vuelve a escribir tu clave."
+                )
+            return LicenseStatus(LicenseState.NONE, code="KEY_UNREADABLE" if self._key_unreadable else "", message=message)
         now = self._now()
         base = {
             "key_masked": mask_key(key),
@@ -350,7 +363,14 @@ class LicenseManager:
             with self._lock:
                 previous = StoredLicense(**vars(self._data))
                 try:
-                    self._data.key_enc = get_secret_box().encrypt(key)
+                    if master_key_is_temporary():
+                        # Sin llavero en esta sesión: no se guarda la clave cifrada con
+                        # una clave temporal (no se podría leer al reiniciar).
+                        self._memory_key = key
+                    else:
+                        self._data.key_enc = get_secret_box().encrypt(key)
+                        self._memory_key = None
+                    self._key_unreadable = False
                     self._accept(key, reply)
                 except LeaseError as exc:
                     self._data = previous
@@ -417,7 +437,7 @@ class LicenseManager:
 
     def refresh_if_due(self) -> LicenseStatus:
         with self._lock:
-            due = self.config.enforced and bool(self._data.key_enc) and (
+            due = self.config.enforced and bool(self._data.key_enc or self._memory_key) and (
                 self.clock() >= self._data.next_refresh
                 or self.clock() + CLOCK_TOLERANCE_SECONDS < self._data.last_attempt
             )
@@ -455,6 +475,8 @@ class LicenseManager:
         with self._lock:
             max_seen = self._data.max_seen
             self._data = StoredLicense(max_seen=max_seen)
+            self._memory_key = None
+            self._key_unreadable = False
             self._save()
         self._notify(force=True)
 
@@ -500,7 +522,7 @@ class LicenseManager:
             first = True
             while not self._stop.is_set():
                 try:
-                    if first and self._data.key_enc:
+                    if first and (self._data.key_enc or self._memory_key):
                         self.refresh()
                     else:
                         self.refresh_if_due()

@@ -2,12 +2,12 @@
  * Acceso a /admin: una contraseña (ADMIN_PASSWORD) y una cookie firmada.
  * Tras varios intentos fallidos desde la misma conexión se bloquea un rato.
  */
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { db } from "./db";
-import { twoFactorEnabled, verifyCode } from "./totp";
+import { TwoFactorUnreadable, twoFactorEnabled, verifyCode } from "./totp";
 import { clientIp, hashIp, secret } from "./util";
 
 const COOKIE = "lotbot_admin";
@@ -15,8 +15,11 @@ const SESSION_HOURS = 12;
 export const MAX_FAILED_LOGINS = 5;
 const LOCK_MINUTES = 15;
 
+/** La firma depende también de la contraseña: al cambiar ADMIN_PASSWORD se
+ * cierran todas las sesiones abiertas de /admin. */
 function sign(payload: string): string {
-  return createHmac("sha256", `admin|${secret()}`).update(payload).digest("hex");
+  const password = createHash("sha256").update(process.env.ADMIN_PASSWORD ?? "").digest("hex");
+  return createHmac("sha256", `admin|${secret()}|${password}`).update(payload).digest("hex");
 }
 
 function safeEqual(a: string, b: string): boolean {
@@ -67,7 +70,14 @@ export async function login(password: string, code = ""): Promise<LoginResult> {
   }
   if (await twoFactorEnabled()) {
     if (!code.trim()) return { ok: false, error: "Escribe el código de 6 cifras de tu app de verificación." };
-    if (!(await verifyCode(code))) {
+    let valid = false;
+    try {
+      valid = await verifyCode(code);
+    } catch (error) {
+      if (error instanceof TwoFactorUnreadable) return { ok: false, error: error.message };
+      throw error;
+    }
+    if (!valid) {
       await sql`INSERT INTO lotbot.login_attempts (ip_hash) VALUES (${ipHash})`;
       return { ok: false, error: "Código de verificación incorrecto o ya usado." };
     }

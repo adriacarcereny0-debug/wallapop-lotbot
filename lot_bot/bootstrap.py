@@ -305,6 +305,11 @@ def create_application(
     configure_logging(settings.log_level, settings.describe_redactions())
     logger.info("Iniciando %s %s (entorno: %s)", APP_NAME, __version__, settings.environment)
 
+    if database is None:
+        # Copia diaria de los datos del cliente antes de abrir la base (7 días).
+        from lot_bot.core.local_backup import daily_backup
+
+        daily_backup(paths.database)
     db = database or get_database()
     db.create_all()
 

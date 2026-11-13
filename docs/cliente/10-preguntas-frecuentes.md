@@ -26,3 +26,12 @@ poner otra.
 
 **Algo no funciona.** LOT Bot → Configuración → Acerca de → «Enviar informe a
 soporte», y mándanos el .zip (no lleva contraseñas ni claves).
+
+**¿Por dónde empiezo?** Al abrir LOT Bot sale «Primeros pasos» con lo que
+falta. También en Configuración → Acerca de → «Primeros pasos».
+
+**¿Se hace copia de mis datos?** Sí: cada día, al abrir LOT Bot, se guarda una
+copia en tu carpeta de datos (las 7 últimas).
+
+**LOT Bot no se abre.** En la ventana de error pulsa «Crear informe para
+soporte» y mándanos el .zip que aparece en el Escritorio.

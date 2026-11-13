@@ -77,6 +77,10 @@ async function refresh(key, fingerprint) {
   return { status: response.status, data: await response.json() };
 }
 
+test("(preparación) base de PRUEBAS sin el freno de pedidos de ejecuciones anteriores", async () => {
+  await sql`DELETE FROM lotbot.login_attempts WHERE scope = 'pedido'`;
+});
+
 test("la base de datos tiene las suscripciones (esquema 3 o posterior)", async () => {
   const health = await (await fetch(`${BASE}/api/health`)).json();
   assert.ok(health.schema >= 3);

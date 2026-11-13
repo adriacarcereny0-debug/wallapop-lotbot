@@ -24,6 +24,10 @@ async function post(path, body, ip = `10.0.${Math.floor(Math.random() * 250)}.${
   return { status: response.status, data: await response.json() };
 }
 
+test("(preparación) base de PRUEBAS sin el freno de pedidos de ejecuciones anteriores", async () => {
+  await sql`DELETE FROM lotbot.login_attempts WHERE scope = 'pedido'`;
+});
+
 test("la prueba gratis da una clave de 24 h", async () => {
   const { status, data } = await post("/api/trial", { email: `ana.${run}@gmail.com`, name: "Ana", accept: true });
   assert.equal(status, 200, JSON.stringify(data));
@@ -66,20 +70,38 @@ test("la prueba exige email válido, aceptar la privacidad y no ser un robot", a
 
 test("la licencia se comprueba y se limita a sus ordenadores", async () => {
   const { data } = await post("/api/trial", { email: `lic.${run}@ejemplo.com`, accept: true });
-  const first = await post("/api/license/verify", { key: data.key, deviceId: "ordenador-A" });
+  const first = await post("/api/license/verify", { key: data.key, deviceId: "ordenador-A-0000000000" });
   assert.equal(first.data.valid, true);
   assert.equal(first.data.kind, "prueba");
-  assert.equal((await post("/api/license/verify", { key: data.key, deviceId: "ordenador-A" })).data.valid, true);
-  const other = await post("/api/license/verify", { key: data.key, deviceId: "ordenador-B" });
+  assert.equal((await post("/api/license/verify", { key: data.key, deviceId: "ordenador-A-0000000000" })).data.valid, true);
+  const other = await post("/api/license/verify", { key: data.key, deviceId: "ordenador-B-0000000000" });
   assert.equal(other.data.valid, false);
   assert.match(other.data.reason, /máximo 1/);
   assert.equal((await post("/api/license/verify", { key: "LOTB-AAAA-BBBB-CCCC" })).data.valid, false);
 });
 
+test("la comprobación antigua tiene el mismo freno que la nueva", async () => {
+  // Huella no válida: no se acepta (no ocupa plazas con cualquier cosa).
+  const bad = await post("/api/license/verify", { key: "LOTB-AAAA-BBBB-CCCC", deviceId: "x" });
+  assert.equal(bad.status, 400);
+  // Muchas claves inventadas desde una conexión: se frena (20 por hora).
+  const ip = `10.66.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
+  let last;
+  for (let i = 0; i < 21; i++) {
+    const response = await fetch(`${BASE}/api/license/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": ip },
+      body: JSON.stringify({ key: `LOTB-ZZZZ-ZZZZ-Z${String(i).padStart(3, "0")}` }),
+    });
+    last = response.status;
+  }
+  assert.equal(last, 429);
+});
+
 test("una prueba caducada ya no vale", async () => {
   const { data } = await post("/api/trial", { email: `caduca.${run}@ejemplo.com`, accept: true });
   await sql`UPDATE lotbot.licenses SET expires_at = now() - interval '1 minute' WHERE key = ${data.key}`;
-  const result = await post("/api/license/verify", { key: data.key, deviceId: "x" });
+  const result = await post("/api/license/verify", { key: data.key, deviceId: "ordenador-x-0000000000" });
   assert.equal(result.data.valid, false);
   assert.match(result.data.reason, /terminado/);
 });
