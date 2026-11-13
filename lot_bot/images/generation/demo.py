@@ -68,6 +68,13 @@ class DemoImageGenerator(ImageGenerator):
         width, height = self._size
         margin = rnd.randint(10, 60)
         draw.rectangle([margin, margin, width - margin, height - margin], outline=tint.getpixel((0, 0)), width=8)
+        # Un «mueble» con contraste claro y en otra posición según la semilla:
+        # así la edición nunca sale casi igual a la foto de partida (con fotos
+        # lisas, el tono y el marco solos podían no notarse).
+        light = sum(image.resize((1, 1)).getpixel((0, 0))) / 3 > 128
+        block = (25, 25, 25) if light else (235, 235, 235)
+        left = rnd.randint(margin + 20, width // 2)
+        draw.rectangle([left, height // 4, left + width // 4, height - 120], fill=block)
         draw.rectangle([0, height - 60, width, height], fill=(20, 20, 20))
         draw.text((20, height - 42), f"IMAGEN DE DEMOSTRACION (edicion)  #{seed}", fill=(255, 255, 255))
         path = destination.with_suffix(".png")
