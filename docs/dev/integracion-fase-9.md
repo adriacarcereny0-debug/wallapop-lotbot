@@ -122,9 +122,11 @@ Sobre el commit de unión `34540fe` (mismo contenido que la fase 9):
 | Copia de seguridad, modo normal sin secretos (`c88d9b1`) | **rojo** en «Comprobar configuración», como debe |
 | Copia y restauración real en local | PostgreSQL 18 → **otro** PostgreSQL 18: 17 tablas, mismas filas y mismo contenido (md5 por tabla). `pg_dump` 17 contra PG 18: reproducido el fallo de producción |
 
+| Prueba de navegador real en el contenedor (Chromium 1243, 4 en paralelo) | **44/44 pasadas** en 7 min 34 s |
+
 En el CI de Windows y Mac la prueba de navegador real (44 casos) se **omite**
 siempre: solo se ejecuta donde hay un Chromium en `/opt/pw-browsers` o con
-`LOT_BOT_BROWSER_EXECUTABLE`.
+`LOT_BOT_BROWSER_EXECUTABLE`. Se ha ejecutado aquí (fila anterior).
 
 Solo se hicieron peticiones de lectura a la vista previa, porque usa la base
 de datos de producción.
