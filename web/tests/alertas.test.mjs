@@ -6,7 +6,7 @@
  *   BASE_URL=... DATABASE_URL=... SESSION_SECRET=(el de la web de pruebas) npm test
  */
 import assert from "node:assert/strict";
-import { createHmac, randomInt, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomInt, randomUUID } from "node:crypto";
 import { test } from "node:test";
 
 import postgres from "postgres";
@@ -37,7 +37,7 @@ async function adminAlertsPage() {
   // Cookie de /admin firmada igual que la web (SESSION_SECRET de la web de pruebas).
   const secret = process.env.SESSION_SECRET ?? "secreto-de-pruebas";
   const expires = String(Date.now() + 3600 * 1000);
-  const signature = createHmac("sha256", `admin|${secret}`).update(expires).digest("hex");
+  const signature = createHmac("sha256", `admin|${secret}|${createHash("sha256").update(process.env.ADMIN_PASSWORD ?? "clave-de-prueba-123").digest("hex")}`).update(expires).digest("hex");
   const response = await fetch(`${BASE}/admin/alertas`, { headers: { Cookie: `lotbot_admin=${expires}.${signature}` }, redirect: "manual" });
   assert.equal(response.status, 200, "sesión de admin");
   return response.text();

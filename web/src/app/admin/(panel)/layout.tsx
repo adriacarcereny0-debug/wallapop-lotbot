@@ -14,6 +14,7 @@ const LINKS = [
   ["/admin/pedidos", "Pedidos"],
   ["/admin/licencias", "Licencias"],
   ["/admin/dispositivos", "Dispositivos"],
+  ["/admin/historial", "Historial de activaciones"],
   ["/admin/versiones", "Versiones"],
   ["/admin/alertas", "Alertas"],
   ["/admin/pruebas", "Pruebas gratis"],
@@ -24,6 +25,7 @@ const LINKS = [
   ["/admin/ajustes", "Ajustes"],
   ["/admin/seguridad", "Seguridad"],
   ["/admin/registro", "Registro"],
+  ["/admin/estado", "Estado del sistema"],
 ];
 
 export default async function PanelLayout({ children }: { children: React.ReactNode }) {

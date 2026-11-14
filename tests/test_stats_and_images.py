@@ -361,3 +361,22 @@ def test_la_ia_no_ve_credenciales_ni_cookies(app):
 
         salida = json.dumps(registro.execute(nombre, argumentos, ToolContext(app=app)).to_model_payload(), default=str)
         assert "Cookies" not in salida and "browser_profiles" not in salida
+
+
+def test_la_edicion_de_demo_nunca_sale_igual_que_una_foto_lisa(tmp_path):
+    """Regresión (auditoría fase 9): con fotos de un solo color, el 17 % de las
+    ediciones de demostración salían «iguales» y la prueba de arriba fallaba
+    de vez en cuando (~0,5 %)."""
+    from PIL import Image
+
+    from lot_bot.images.generation.demo import DemoImageGenerator
+    from lot_bot.images.generation.registry import DUPLICATE_THRESHOLD, dhash, hamming
+
+    generator = DemoImageGenerator()
+    for color in [(120, 120, 130), (240, 240, 240), (15, 15, 15)]:
+        source = tmp_path / f"lisa-{color[0]}.jpg"
+        Image.new("RGB", (800, 600), color).save(source)
+        reference = dhash(source)
+        for seed in range(1, 151):
+            edited = generator._from_reference("p", seed, tmp_path / f"e{color[0]}-{seed}", source)
+            assert hamming(dhash(edited), reference) > DUPLICATE_THRESHOLD, (color, seed)

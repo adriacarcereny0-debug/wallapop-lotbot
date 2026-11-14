@@ -39,6 +39,14 @@ def _keyring():
         return None
 
 
+_TEMPORARY_KEY = False
+
+
+def master_key_is_temporary() -> bool:
+    """True si en esta sesión el llavero no ha respondido y se usa una clave temporal."""
+    return _TEMPORARY_KEY
+
+
 class _KeyringFailed(Exception):
     """El llavero existe pero no ha respondido (bloqueado, permiso denegado...)."""
 
@@ -127,6 +135,8 @@ def get_master_key() -> bytes:
             "No se ha podido leer la clave maestra del llavero: las claves guardadas no "
             "se podrán leer en esta sesión. Reinicia LOT Bot (y permite el acceso al llavero)."
         )
+        global _TEMPORARY_KEY
+        _TEMPORARY_KEY = True
         return Fernet.generate_key()
     if stored:
         return _normalise_key(stored)

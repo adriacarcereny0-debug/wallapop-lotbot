@@ -63,7 +63,7 @@ test("sin licencia no hay lista; el resultado «modificada» sale en Alertas", a
   assert.equal(ok.status, 200);
   const secret = process.env.SESSION_SECRET ?? "secreto-de-pruebas";
   const expires = String(Date.now() + 3600 * 1000);
-  const cookie = `lotbot_admin=${expires}.${createHmac("sha256", `admin|${secret}`).update(expires).digest("hex")}`;
+  const cookie = `lotbot_admin=${expires}.${createHmac("sha256", `admin|${secret}|${createHash("sha256").update(process.env.ADMIN_PASSWORD ?? "clave-de-prueba-123").digest("hex")}`).update(expires).digest("hex")}`;
   const page = await (await fetch(`${BASE}/admin/alertas`, { headers: { Cookie: cookie } })).text();
   assert.match(page, /Instalación modificada/);
   assert.match(page, new RegExp(d.key));

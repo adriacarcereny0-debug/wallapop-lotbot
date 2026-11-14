@@ -753,3 +753,31 @@ def test_con_la_clave_real_el_demo_sigue_libre_y_wallapop_real_pide_licencia(app
 
     with pytest.raises(LicenseRequiredError):
         app.wallapop.create_item("c1", ItemDraft(title="x", description="y", price=1))
+
+
+# ---------------------------------------------------------------------------
+# Llavero del sistema que no responde (auditoría fase 9)
+# ---------------------------------------------------------------------------
+def test_licencia_guardada_ilegible_explica_el_motivo_y_avisa_una_vez(manager, caplog):
+    import logging
+
+    manager.activate(KEY)
+    manager._data.key_enc = "esto-no-se-puede-descifrar"
+    with caplog.at_level(logging.WARNING, logger="lot_bot.licensing.manager"):
+        for _ in range(5):
+            status = manager.status()
+    assert status.state is LicenseState.NONE and status.code == "KEY_UNREADABLE"
+    assert "llavero" in status.message
+    assert len([r for r in caplog.records if "llavero" in r.getMessage()]) == 1
+
+
+def test_sin_llavero_se_activa_sin_guardar_la_clave_con_una_clave_temporal(manager, server, clock, monkeypatch):
+    import lot_bot.licensing.manager as manager_module
+
+    monkeypatch.setattr(manager_module, "master_key_is_temporary", lambda: True)
+    assert manager.activate(KEY).ok
+    assert manager.status().allowed  # funciona en esta sesión
+    assert manager._data.key_enc is None  # no se guarda cifrada con la clave temporal
+    clock[0] = manager._data.next_refresh + 1
+    manager.refresh_if_due()
+    assert "refresh" in server.calls  # y se sigue renovando

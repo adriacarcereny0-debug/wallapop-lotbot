@@ -106,7 +106,7 @@ async function record(licenseId: number | null, kind: string, fingerprint = "", 
   `;
 }
 
-async function tooManyFailures(ipHash: string): Promise<boolean> {
+export async function tooManyFailures(ipHash: string): Promise<boolean> {
   const sql = await db();
   const [{ count }] = await sql<{ count: number }[]>`
     SELECT count(*)::int AS count FROM lotbot.license_events
@@ -138,6 +138,11 @@ async function info(license: LicenseRow): Promise<LicenseInfo> {
     max_devices: license.max_devices,
     devices_in_use: count,
   };
+}
+
+/** Para la comprobación antigua: apunta una clave inventada (cuenta para el freno). */
+export async function recordUnknownKey(fingerprint: string, ipHash: string): Promise<void> {
+  await record(null, "clave_inexistente", fingerprint, ipHash, "api antigua");
 }
 
 /** ¿Se puede usar la licencia ahora? null = sí; si no, el motivo. */

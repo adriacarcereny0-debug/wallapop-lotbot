@@ -187,3 +187,42 @@ def build_report(app: Application, description: str = "", folder: Path | None = 
     except Exception:
         pass
     return target
+
+
+def build_crash_report(error_text: str, folder: Path | None = None) -> Path:
+    """Informe cuando LOT Bot NO ha podido arrancar (sin aplicación cargada):
+    el error, el sistema y los registros, con el mismo filtro de secretos."""
+    from lot_bot import __version__
+    from lot_bot.config.paths import get_paths
+
+    folder = Path(folder) if folder else default_folder()
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"LOT-Bot-informe-arranque-{datetime.now():%Y%m%d-%H%M%S}.zip"
+    try:
+        logs_dir = Path(get_paths().logs)
+    except Exception:  # sin carpeta de datos: solo el error
+        logs_dir = None
+    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            "LEEME.txt",
+            "INFORME DE LOT BOT PARA SOPORTE (no ha podido arrancar)\n\n"
+            f"Creado: {datetime.now():%d/%m/%Y %H:%M}\n"
+            "Incluye: el error, el sistema y los registros técnicos.\n"
+            "NO incluye contraseñas, cookies, sesiones de navegador, claves ni la base de datos.\n",
+        )
+        zf.writestr(
+            "sistema.txt",
+            f"LOT Bot: {__version__}\nSistema: {platform.system()} {platform.release()} "
+            f"({platform.machine()})\nPython: {sys.version.split()[0]}\n",
+        )
+        zf.writestr("error.txt", redact(error_text))
+        if logs_dir is not None and logs_dir.is_dir():
+            total = 0
+            for log in sorted(logs_dir.glob("*.log*"), key=lambda p: p.stat().st_mtime, reverse=True):
+                if log.suffix in NEVER or total > MAX_LOG_BYTES:
+                    continue
+                text = _safe_text(log)
+                total += len(text)
+                zf.writestr(f"logs/{log.name}", text)
+    logger.info("Informe de arranque para soporte creado: %s", target)
+    return target

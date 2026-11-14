@@ -59,22 +59,44 @@ export function totp(secretB32: string, step: number): string {
   return String(code).padStart(6, "0");
 }
 
-function aesKey(): Buffer {
-  return createHash("sha256").update(`2fa|${secret()}`).digest();
+/** Claves posibles: la actual primero. Si un día se añade o cambia SESSION_SECRET
+ * (antes se usaba ADMIN_PASSWORD), el secreto guardado se sigue pudiendo leer
+ * y se vuelve a cifrar con la clave nueva: nadie se queda fuera de /admin. */
+function candidateKeys(): Buffer[] {
+  const values = [secret(), process.env.SESSION_SECRET, process.env.ADMIN_PASSWORD, "lotbot-sin-secreto"];
+  const unique = [...new Set(values.filter((v): v is string => Boolean(v)))];
+  return unique.map((value) => createHash("sha256").update(`2fa|${value}`).digest());
 }
 
 function encrypt(text: string): string {
   const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", aesKey(), iv);
+  const cipher = createCipheriv("aes-256-gcm", candidateKeys()[0], iv);
   const body = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
   return [iv, cipher.getAuthTag(), body].map((b) => b.toString("base64")).join(".");
 }
 
-function decrypt(value: string): string {
+export class TwoFactorUnreadable extends Error {}
+
+function decryptWith(value: string): { text: string; current: boolean } {
   const [iv, tag, body] = value.split(".").map((p) => Buffer.from(p, "base64"));
-  const decipher = createDecipheriv("aes-256-gcm", aesKey(), iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(body), decipher.final()]).toString("utf8");
+  const keys = candidateKeys();
+  for (let i = 0; i < keys.length; i++) {
+    try {
+      const decipher = createDecipheriv("aes-256-gcm", keys[i], iv);
+      decipher.setAuthTag(tag);
+      return { text: Buffer.concat([decipher.update(body), decipher.final()]).toString("utf8"), current: i === 0 };
+    } catch {
+      // se prueba la siguiente
+    }
+  }
+  throw new TwoFactorUnreadable(
+    "No se puede leer la verificación en dos pasos guardada (cambió SESSION_SECRET y ADMIN_PASSWORD). " +
+      "Desactívala borrando el ajuste «admin_2fa» de la base de datos (ver docs/dev/operacion.md).",
+  );
+}
+
+function decrypt(value: string): string {
+  return decryptWith(value).text;
 }
 
 async function stored(): Promise<Stored | null> {
@@ -104,14 +126,17 @@ export async function pendingSecret(): Promise<string | null> {
 export async function verifyCode(code: string, now = Date.now()): Promise<boolean> {
   const current = await stored();
   if (!current || !/^\d{6}$/.test(code.trim())) return false;
-  const key = decrypt(current.enc);
+  const opened = decryptWith(current.enc);
+  const key = opened.text;
   const step = Math.floor(now / 1000 / STEP);
   for (const candidate of [step - 1, step, step + 1]) {
     if (candidate <= current.last_step) continue;
     const expected = Buffer.from(totp(key, candidate));
     const given = Buffer.from(code.trim());
     if (expected.length === given.length && timingSafeEqual(expected, given)) {
-      await setSetting(null, KEY, { ...current, last_step: candidate });
+      // Si se leyó con una clave antigua, se vuelve a cifrar con la actual.
+      const enc = opened.current ? current.enc : encrypt(key);
+      await setSetting(null, KEY, { ...current, enc, last_step: candidate });
       return true;
     }
   }

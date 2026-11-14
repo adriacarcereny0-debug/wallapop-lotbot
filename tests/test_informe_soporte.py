@@ -74,3 +74,19 @@ def test_el_informe_lleva_el_numero_de_licencia_pero_no_la_clave(app_with_data, 
     assert "Licencia: activa · n.º 7" in sistema
     assert "LOTB-••••-••••-EF56" in sistema
     assert KEY not in sistema
+
+
+def test_informe_cuando_no_arranca(temp_paths, tmp_path):
+    from lot_bot.core.support_report import build_crash_report
+
+    register_secret("clave-de-arranque-secreta-9")
+    temp_paths.logs.mkdir(parents=True, exist_ok=True)
+    (temp_paths.logs / "lot_bot.log").write_text("ERROR al arrancar con clave-de-arranque-secreta-9\n", encoding="utf-8")
+    (temp_paths.logs / "datos.db").write_bytes(b"no debe ir")
+    path = build_crash_report("Traceback: fallo con clave-de-arranque-secreta-9", tmp_path)
+    with zipfile.ZipFile(path) as zf:
+        names = set(zf.namelist())
+        text = "".join(zf.read(n).decode("utf-8", "replace") for n in names)
+    assert {"LEEME.txt", "sistema.txt", "error.txt", "logs/lot_bot.log"} <= names
+    assert not any(n.endswith(".db") for n in names)
+    assert "clave-de-arranque-secreta-9" not in text and "Traceback" in text

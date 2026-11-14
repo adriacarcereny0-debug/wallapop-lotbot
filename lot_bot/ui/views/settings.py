@@ -561,6 +561,22 @@ class SettingsView(BaseView):
         updates.body.addLayout(row)
         layout.addWidget(updates)
 
+        guide = Card()
+        guide.add(SectionTitle("Primeros pasos"))
+        guide_text = QLabel(
+            "La guía para empezar: licencia, cuenta de Wallapop, anuncio principal, fotos y primera "
+            "publicación. LOT Bot marca solo lo que ya está hecho."
+        )
+        guide_text.setWordWrap(True)
+        guide.add(guide_text)
+        guide_row = QHBoxLayout()
+        guide_button = QPushButton("Abrir «Primeros pasos»")
+        guide_button.clicked.connect(self._open_onboarding)
+        guide_row.addWidget(guide_button)
+        guide_row.addStretch(1)
+        guide.body.addLayout(guide_row)
+        layout.addWidget(guide)
+
         support = Card()
         support.add(SectionTitle("Soporte"))
         support_text = QLabel(
@@ -578,6 +594,11 @@ class SettingsView(BaseView):
         layout.addWidget(support)
         layout.addStretch(1)
         return widget
+
+    def _open_onboarding(self) -> None:
+        window = self.window()
+        if hasattr(window, "show_onboarding"):
+            window.show_onboarding()
 
     def _send_report(self) -> None:
         from lot_bot.ui.support import send_support_report

@@ -11,6 +11,34 @@ from lot_bot import APP_NAME, ORG_NAME, __version__
 logger = logging.getLogger(__name__)
 
 
+def _offer_crash_report(box, detail: str) -> None:
+    """Botón «Crear informe para soporte» en las ventanas de error grave."""
+    from PySide6.QtWidgets import QMessageBox
+
+    button = box.addButton("Crear informe para soporte", QMessageBox.ButtonRole.ActionRole)
+    box.addButton(QMessageBox.StandardButton.Close)
+    box.exec()
+    if box.clickedButton() is not button:
+        return
+    try:
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        from lot_bot.core.support_report import build_crash_report
+
+        path = build_crash_report(detail)
+        done = QMessageBox()
+        done.setWindowTitle(f"{APP_NAME} · informe creado")
+        done.setText(
+            f"Se ha guardado en:\n\n{path}\n\nEnvíaselo a soporte por WhatsApp o email. "
+            "No lleva contraseñas ni claves."
+        )
+        done.exec()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+    except Exception:  # pragma: no cover - si ni esto funciona, al menos no se cuelga
+        logger.exception("No se ha podido crear el informe de arranque")
+
+
 def _install_exception_hook() -> None:
     """Muestra un mensaje entendible si algo falla de forma inesperada."""
 
@@ -32,10 +60,9 @@ def _install_exception_hook() -> None:
                     "Se ha producido un error inesperado.\n"
                     "El detalle técnico se ha guardado en los registros."
                 )
-                box.setDetailedText(
-                    "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
-                )
-                box.exec()
+                detail = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+                box.setDetailedText(detail)
+                _offer_crash_report(box, detail)
         except Exception:  # pragma: no cover
             pass
 
@@ -74,9 +101,13 @@ def main(argv: list[str] | None = None) -> int:
         box = QMessageBox()
         box.setWindowTitle(f"{APP_NAME} · no se ha podido iniciar")
         box.setIcon(QMessageBox.Icon.Critical)
-        box.setText(f"LOT Bot no ha podido arrancar:\n\n{exc}")
-        box.setDetailedText(traceback.format_exc())
-        box.exec()
+        box.setText(
+            f"LOT Bot no ha podido arrancar:\n\n{exc}\n\nTus datos no se han tocado. Pulsa «Crear "
+            "informe para soporte» y envíanoslo para que te ayudemos."
+        )
+        detail = traceback.format_exc()
+        box.setDetailedText(detail)
+        _offer_crash_report(box, detail)
         return 1
 
     if app.demo_mode:
@@ -91,6 +122,10 @@ def main(argv: list[str] | None = None) -> int:
 
     window = MainWindow(app)
     window.show()
+    # Guía de primeros pasos (sale sola mientras falte algo por hacer).
+    from PySide6.QtCore import QTimer
+
+    QTimer.singleShot(900, window.maybe_show_onboarding)
     logger.info("Ventana principal abierta.")
     return qt_app.exec()
 

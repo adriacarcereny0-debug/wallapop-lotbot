@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { createSubscriptionCheckout, hasLiveSubscription } from "@/lib/billing";
 import { createCheckout } from "@/lib/stripe";
 import { createOrder, getPlan, publicPaymentMethods, upsertCustomer } from "@/lib/store";
-import { cleanEmail, cleanText, siteUrl } from "@/lib/util";
+import { cleanEmail, cleanText, clientIp, hashIp, siteUrl } from "@/lib/util";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +17,17 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ ok: false, error: "Datos no válidos." }, { status: 400 });
   }
+  // Freno a quien crea pedidos en masa desde la misma conexión (20 por hora).
+  const ipHash = hashIp(clientIp(request.headers));
+  const sqlLimit = await db();
+  const [{ recent }] = await sqlLimit<{ recent: number }[]>`
+    SELECT count(*)::int AS recent FROM lotbot.login_attempts
+    WHERE ip_hash = ${ipHash} AND scope = 'pedido' AND at > now() - interval '1 hour'
+  `;
+  if (recent >= 20) {
+    return NextResponse.json({ ok: false, error: "Demasiados pedidos seguidos. Espera un rato o escríbenos." }, { status: 429 });
+  }
+  await sqlLimit`INSERT INTO lotbot.login_attempts (ip_hash, scope) VALUES (${ipHash}, 'pedido')`;
   const email = cleanEmail(body.email);
   if (!email) return NextResponse.json({ ok: false, error: "Escribe un email válido." }, { status: 400 });
   if (body.accept !== true) {

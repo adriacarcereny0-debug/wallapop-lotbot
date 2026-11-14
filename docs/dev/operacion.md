@@ -49,3 +49,24 @@ contraseñas: sin ella la copia no se puede abrir).
    publicar esa versión; esperar a que la tengan todos (`/admin/versiones`).
 3. Cambiar `LICENSE_SIGNING_KEY` en Vercel y actualizar el `kid` en
    `.github/workflows/vigilancia.yml`.
+
+## Datos del cliente en su ordenador
+
+LOT Bot hace cada día, al abrirse, una copia de la base de datos local del
+cliente en su carpeta de datos (`copias/lot_bot-AAAAMMDD.db`, 7 días):
+
+- Windows: `%LOCALAPPDATA%\LOT Bot\copias`
+- Mac: `~/Library/Application Support/LOT Bot/copias`
+
+Restaurar: cerrar LOT Bot, copiar la copia elegida encima de `lot_bot.db` (en
+la misma carpeta de datos) y abrir LOT Bot.
+
+Si LOT Bot no arranca, la ventana de error tiene el botón «Crear informe para
+soporte»: deja un .zip en el Escritorio con el error y los registros (sin
+contraseñas ni claves).
+
+## Diagnóstico rápido
+
+`/admin/estado` muestra qué está configurado y qué falta (firma, Stripe,
+SESSION_SECRET, versiones, descargas, verificación en dos pasos) y cuándo se
+recibió el último aviso de Stripe y la última comprobación de licencia.
