@@ -71,6 +71,18 @@ El resto de datos comerciales (precios de oferta, condiciones de envío, montaje
 se configuran desde **Configuración → Negocio** y se guardan en la base de datos local,
 no en variables de entorno.
 
+## Desarrollo, pruebas y diagnóstico
+
+Ninguna hace falta en el ordenador de un cliente.
+
+| Variable | Para qué |
+|---|---|
+| `LOT_BOT_WALLAPOP_INTEGRATION` | Fuerza la integración (`perfil` o `navegador`). Vacía: la que se eligió en Configuración |
+| `LOT_BOT_UPDATE_CHECK` | `0` desactiva la búsqueda automática de actualizaciones (pruebas y demo) |
+| `LOT_BOT_AUTOPRUEBA_LOG` | Fichero donde `--autoprueba` escribe el resultado (el .exe de Windows no tiene consola) |
+| `LOT_BOT_BROWSER_EXECUTABLE` | Ruta de un navegador concreto (p. ej. el Chromium de un contenedor) |
+| `LOT_BOT_BROWSER_SANDBOX` | `0` desactiva el sandbox de Chromium, **solo Linux** (contenedores como root). Ver `solucion-errores.md` |
+
 ## Comprobar la configuración cargada
 
 Dentro de la aplicación: **Configuración → Wallapop**. Muestra qué hay configurado

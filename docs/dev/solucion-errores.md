@@ -106,3 +106,21 @@ se pueden volver a sincronizar.
 1. **Logs y errores → Abrir carpeta**.
 2. Envía `lot_bot.log`.
 3. Indica qué modo aparece en la barra de estado y qué acción falló.
+
+## Desarrollo en Linux o contenedores: «Executable doesn't exist at …/chromium_headless_shell-NNNN»
+
+Solo afecta a entornos de desarrollo (los clientes usan Chrome o Edge
+instalados). Significa que la versión de Playwright instalada en Python espera
+un Chromium distinto del que hay en la máquina (p. ej. Playwright 1.64 espera
+el 1248 y el contenedor trae el 1243). No hace falta descargar otro: indica el
+Chromium que ya existe y, si se ejecuta como root dentro de un contenedor,
+desactiva el sandbox de Chromium (solo Linux, nunca en el ordenador de un
+cliente):
+
+```bash
+LOT_BOT_BROWSER_EXECUTABLE=/opt/pw-browsers/chromium \
+LOT_BOT_BROWSER_SANDBOX=0 \
+QT_QPA_PLATFORM=offscreen python run_lot_bot.py --autoprueba
+```
+
+Comprobado el 14/11/2026: autoprueba «TODO CORRECTO» con esas dos variables.

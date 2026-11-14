@@ -1,15 +1,29 @@
-# Vigilancia de la web y del servidor de licencias, cada hora.
+# Vigilancia de la web y del servidor de licencias (objetivo: al menos una
+# comprobación por hora).
 # Si algo falla, el flujo sale en rojo y GitHub te avisa por email
 # (Settings → Notifications → Actions: «Send notifications for failed workflows»).
+#
+# Por qué cada 10 minutos: GitHub NO garantiza las tareas programadas y en
+# repositorios con poca actividad descarta muchas. Con «cada hora» se
+# ejecutaron 5 de ~35 (14 %, huecos de 6-8 h, medido 12-14/11/2026). Pidiendo
+# 6 por hora queda, en la práctica, alrededor de una por hora. Para un aviso
+# garantizado en minutos, usa además un servicio externo sobre /api/health
+# (ver docs/dev/operacion.md).
+# Solo se ejecuta desde la rama por defecto de GitHub.
 name: Vigilancia
 
 on:
   schedule:
-    - cron: "41 * * * *"
+    - cron: "4,14,24,34,44,54 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# Nunca dos comprobaciones a la vez (si una tarda, la siguiente espera).
+concurrency:
+  group: vigilancia
+  cancel-in-progress: false
 
 jobs:
   comprobar:

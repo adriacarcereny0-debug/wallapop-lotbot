@@ -133,7 +133,17 @@ completo en `web/.env.example`, explicación en `web/README.md`):
 | `RELEASE_API_TOKEN`, `GITHUB_RELEASES_REPO`, `GITHUB_RELEASES_TOKEN` | para actualizaciones | no |
 | `BILLING_GRACE_DAYS` (5), `LICENSE_LEASE_HOURS` (72) | opcionales | no (valores por defecto) |
 
-**Secretos de GitHub** (Settings → Secrets → Actions): `RELEASE_API_TOKEN`
-(publicar versiones), `BACKUP_DATABASE_URL` y `BACKUP_PASSPHRASE` (copia
-diaria; sin ellos el flujo sale en verde pero **no hace copia**, solo avisa),
-`WIN_CERT_*` / `MAC_CERT_*` (firma, opcionales).
+**Secretos de GitHub** (Settings → Secrets → Actions). Nombres exactos
+sacados de los flujos; ningún valor está en el repositorio:
+
+| Secreto | Para qué | Flujo |
+|---|---|---|
+| `BACKUP_DATABASE_URL`, `BACKUP_PASSPHRASE` | copia diaria (sin ellos, **rojo**) | `copia-seguridad.yml` |
+| `RELEASE_API_TOKEN` | registrar versiones en la web (igual que en Vercel) | `publicar-version.yml` |
+| `WINDOWS_CERT_PFX_BASE64`, `WINDOWS_CERT_PASSWORD` | firma de Windows (opcional) | `publicar-version.yml` |
+| `MACOS_CERT_P12_BASE64`, `MACOS_CERT_PASSWORD`, `MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` | firma y notarización de Mac (opcional) | `publicar-version.yml`, `build-macos.yml` |
+
+Variable de GitHub (no secreta): `LOTBOT_SITE_URL` (por defecto
+`https://www.lotbot.es`), usada por la vigilancia y la publicación.
+
+Variables del programa de escritorio: `docs/dev/variables-entorno.md`.

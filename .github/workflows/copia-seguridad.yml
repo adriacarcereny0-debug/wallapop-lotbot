@@ -1,63 +1,105 @@
 # Copia de seguridad diaria de la base de datos de LOT Bot (solo el esquema
 # «lotbot»: clientes, licencias, suscripciones, versiones…; nada del CRM).
 #
-# Se guarda CIFRADA (AES-256) como artefacto de GitHub durante 30 días.
+# Se guarda CIFRADA (AES-256) como artefacto de GitHub durante 30 días y CADA
+# copia se restaura en una base PostgreSQL desechable dentro de este mismo
+# trabajo (nunca en producción) para comprobar que sirve: mismas filas en cada
+# tabla. Si algo falla —también si faltan los secretos— el flujo sale en ROJO
+# y GitHub avisa por email.
+#
 # Secretos (Settings → Secrets → Actions):
-#   BACKUP_DATABASE_URL   cadena de conexión de Neon/Supabase (puede ser de solo lectura)
+#   BACKUP_DATABASE_URL   cadena de conexión de Neon (mejor un usuario de solo lectura)
 #   BACKUP_PASSPHRASE     contraseña larga para cifrar (guárdala también en tu gestor)
 #
-# Restaurar (en tu ordenador):
+# Restaurar (en tu ordenador, en una base VACÍA):
 #   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in lotbot-AAAAMMDD.sql.gz.enc \
 #     -pass pass:'TU_CONTRASEÑA' | gunzip | psql "$DATABASE_URL_DESTINO"
+# o, comprobando filas: scripts/copia_seguridad.sh verificar (ver el script).
 name: Copia de seguridad
 
 on:
   schedule:
     - cron: "17 3 * * *" # cada día a las 03:17 UTC
   workflow_dispatch:
+    inputs:
+      prueba:
+        description: "Ensayo: copiar una base de PRUEBA desechable en vez de la real (no usa los secretos)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+env:
+  # Misma versión mayor que el servidor (Neon: PostgreSQL 18). pg_dump se
+  # niega a copiar un servidor más nuevo que él; el script lo comprueba.
+  PG_MAJOR: "18"
 
 jobs:
   copia:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      # Base desechable para la prueba de restauración (solo existe en este trabajo).
+      restauracion:
+        image: postgres:18
+        env:
+          POSTGRES_USER: prueba
+          POSTGRES_PASSWORD: prueba
+          POSTGRES_DB: restauracion
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U prueba" --health-interval 5s --health-timeout 5s --health-retries 10
+      # Solo para el ensayo: origen falso con datos de ejemplo.
+      origen:
+        image: postgres:18
+        env:
+          POSTGRES_USER: prueba
+          POSTGRES_PASSWORD: prueba
+          POSTGRES_DB: origen
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U prueba" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
-      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+      ENSAYO: ${{ inputs.prueba && 'si' || 'no' }}
+      BACKUP_DATABASE_URL: ${{ inputs.prueba && 'postgres://prueba:prueba@localhost:5433/origen' || secrets.BACKUP_DATABASE_URL }}
+      BACKUP_PASSPHRASE: ${{ inputs.prueba && 'contrasena-solo-para-el-ensayo' || secrets.BACKUP_PASSPHRASE }}
     steps:
       - name: Comprobar configuración
-        id: cfg
         run: |
+          echo "Ensayo con base de prueba: $ENSAYO"
           if [ -z "$BACKUP_DATABASE_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]; then
-            echo "::warning::Faltan BACKUP_DATABASE_URL o BACKUP_PASSPHRASE: no se hace copia."
-            echo "listo=no" >> "$GITHUB_OUTPUT"
-          else
-            echo "listo=si" >> "$GITHUB_OUTPUT"
+            echo "::error::Faltan los secretos BACKUP_DATABASE_URL o BACKUP_PASSPHRASE: NO se ha hecho copia."
+            exit 1
           fi
-      - name: Cliente de PostgreSQL 17
-        if: steps.cfg.outputs.listo == 'si'
+      - uses: actions/checkout@v4
+      - name: Cliente de PostgreSQL ${{ env.PG_MAJOR }}
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
-          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
+          sudo apt-get update -qq && sudo apt-get install -y -qq "postgresql-client-$PG_MAJOR"
+          echo "PG_BIN=/usr/lib/postgresql/$PG_MAJOR/bin" >> "$GITHUB_ENV"
+      - name: "Ensayo: datos de ejemplo en la base de prueba"
+        if: env.ENSAYO == 'si'
+        run: |
+          "$PG_BIN/psql" "$BACKUP_DATABASE_URL" -Xq -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE SCHEMA lotbot;
+          CREATE TABLE lotbot.licenses (id serial PRIMARY KEY, key text UNIQUE NOT NULL, created_at timestamptz DEFAULT now());
+          CREATE TABLE lotbot.license_events (id serial PRIMARY KEY, license_id int REFERENCES lotbot.licenses(id), kind text);
+          ALTER TABLE lotbot.licenses ENABLE ROW LEVEL SECURITY;
+          INSERT INTO lotbot.licenses (key) SELECT 'LOTB-PRUEBA-' || g FROM generate_series(1, 500) g;
+          INSERT INTO lotbot.license_events (license_id, kind) SELECT 1 + g % 500, 'activacion' FROM generate_series(1, 2000) g;
+          SQL
       - name: Copiar y cifrar
-        if: steps.cfg.outputs.listo == 'si'
         run: |
           FILE="lotbot-$(date -u +%Y%m%d).sql.gz.enc"
-          /usr/lib/postgresql/17/bin/pg_dump "$BACKUP_DATABASE_URL" --schema=lotbot --no-owner --no-privileges \
-            | gzip -9 \
-            | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BACKUP_PASSPHRASE -out "$FILE"
-          SIZE=$(stat -c %s "$FILE")
-          [ "$SIZE" -gt 1000 ] || { echo "::error::La copia ha salido vacía ($SIZE bytes)"; exit 1; }
-          # Comprobación: se puede descifrar y trae las tablas de licencias.
-          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BACKUP_PASSPHRASE -in "$FILE" | gunzip | grep -q "CREATE TABLE lotbot.licenses"
-          echo "Copia $FILE: $SIZE bytes, verificada."
+          [ "$ENSAYO" = "no" ] || FILE="ENSAYO-$FILE"
+          bash scripts/copia_seguridad.sh copiar "$FILE"
           echo "FILE=$FILE" >> "$GITHUB_ENV"
+      - name: Restaurar en una base desechable y comparar
+        run: bash scripts/copia_seguridad.sh verificar "$FILE" postgres://prueba:prueba@localhost:5432/restauracion
       - uses: actions/upload-artifact@v4
-        if: steps.cfg.outputs.listo == 'si'
         with:
           name: ${{ env.FILE }}
           path: ${{ env.FILE }}
