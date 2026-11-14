@@ -46,6 +46,18 @@ copiar() {
   echo "Servidor PostgreSQL ${server:0:2}, pg_dump $client"
   [ "$client" -ge "$((server / 10000))" ] || die "pg_dump $client es más antiguo que el servidor (${server:0:2}): instala el cliente ${server:0:2}"
 
+  # Todas las tablas de lotbot deben poder leerse (si no, la copia saldría
+  # incompleta o vacía por RLS). Ver scripts/sql/usuario_copia.sql.
+  local missing
+  missing=$("$PSQL" "$BACKUP_DATABASE_URL" -XAtq -v ON_ERROR_STOP=1 -c "
+    SELECT coalesce(string_agg(t.tablename, ', '), '') FROM pg_tables t
+     WHERE t.schemaname = 'lotbot'
+       AND NOT has_table_privilege(format('%I.%I', t.schemaname, t.tablename), 'SELECT')")
+  [ -z "$missing" ] || die "El usuario de la copia no puede leer: $missing (ejecuta scripts/sql/usuario_copia.sql)"
+  local rls
+  rls=$("$PSQL" "$BACKUP_DATABASE_URL" -XAtq -c "SELECT rolbypassrls OR rolsuper FROM pg_roles WHERE rolname = current_user")
+  [ "$rls" = "t" ] || die "El usuario de la copia no tiene BYPASSRLS: vería las tablas vacías (ejecuta scripts/sql/usuario_copia.sql)"
+
   count_rows "$BACKUP_DATABASE_URL" > "$out.antes"
   "$PG_DUMP" "$BACKUP_DATABASE_URL" --schema=lotbot --no-owner --no-privileges \
     | gzip -9 \
