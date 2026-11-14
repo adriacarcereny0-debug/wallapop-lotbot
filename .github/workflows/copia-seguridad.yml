@@ -26,6 +26,10 @@ on:
         description: "Ensayo: copiar una base de PRUEBA desechable en vez de la real (no usa los secretos)"
         type: boolean
         default: false
+      solo_comprobar:
+        description: "Solo comprobar que los secretos existen y tienen la forma correcta (no se conecta a ninguna base ni copia nada)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -62,6 +66,7 @@ jobs:
           --health-cmd "pg_isready -U prueba -d postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       ENSAYO: ${{ inputs.prueba && 'si' || 'no' }}
+      SOLO_COMPROBAR: ${{ inputs.solo_comprobar && 'si' || 'no' }}
       BACKUP_DATABASE_URL: ${{ inputs.prueba && 'postgres://prueba:prueba@localhost:5433/origen' || secrets.BACKUP_DATABASE_URL }}
       BACKUP_PASSPHRASE: ${{ inputs.prueba && 'contrasena-solo-para-el-ensayo' || secrets.BACKUP_PASSPHRASE }}
     steps:
@@ -72,8 +77,31 @@ jobs:
             echo "::error::Faltan los secretos BACKUP_DATABASE_URL o BACKUP_PASSPHRASE: NO se ha hecho copia."
             exit 1
           fi
+      - name: "Solo comprobar: forma de los secretos (sin conectarse; no muestra valores)"
+        if: env.SOLO_COMPROBAR == 'si'
+        run: |
+          # Solo se escribe «sí»/«no» por comprobación: nunca el valor.
+          ok=1
+          check() { if eval "$2"; then echo "  ✔ $1"; else echo "::error::✘ $1"; ok=0; fi; }
+          U="$BACKUP_DATABASE_URL"
+          check "BACKUP_DATABASE_URL existe" '[ -n "$U" ]'
+          check "empieza por postgres:// o postgresql://" '[[ "$U" =~ ^postgres(ql)?:// ]]'
+          check "usuario lotbot_copia" '[[ "$U" =~ ^postgres(ql)?://lotbot_copia: ]]'
+          check "lleva contraseña" '[[ "$U" =~ ^postgres(ql)?://lotbot_copia:[^@]+@ ]]'
+          check "host de Neon" '[[ "$U" =~ @[^/]+\.neon\.tech(:[0-9]+)?/ ]]'
+          check "conexión directa (sin -pooler)" '! [[ "$U" =~ -pooler ]]'
+          check "base neondb" '[[ "$U" =~ /neondb(\?|$) ]]'
+          check "SSL obligatorio (sslmode=require o más)" '[[ "$U" =~ sslmode=(require|verify-ca|verify-full) ]]'
+          check "sin espacios ni saltos de línea" '! [[ "$U" =~ [[:space:]] ]]'
+          check "BACKUP_PASSPHRASE existe" '[ -n "$BACKUP_PASSPHRASE" ]'
+          check "BACKUP_PASSPHRASE de 32 caracteres o más" '[ "${#BACKUP_PASSPHRASE}" -ge 32 ]'
+          check "BACKUP_PASSPHRASE distinta de la contraseña de la base" '! [[ "$U" == *"$BACKUP_PASSPHRASE"* ]]'
+          [ "$ok" = 1 ] || exit 1
+          echo "Secretos correctos. No se ha conectado a ninguna base ni se ha copiado nada."
       - uses: actions/checkout@v4
+        if: env.SOLO_COMPROBAR == 'no'
       - name: Cliente de PostgreSQL ${{ env.PG_MAJOR }}
+        if: env.SOLO_COMPROBAR == 'no'
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
@@ -81,7 +109,7 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq "postgresql-client-$PG_MAJOR"
           echo "PG_BIN=/usr/lib/postgresql/$PG_MAJOR/bin" >> "$GITHUB_ENV"
       - name: "Ensayo: datos de ejemplo en la base de prueba"
-        if: env.ENSAYO == 'si'
+        if: env.ENSAYO == 'si' && env.SOLO_COMPROBAR == 'no'
         run: |
           "$PG_BIN/psql" "$BACKUP_DATABASE_URL" -Xq -v ON_ERROR_STOP=1 <<'SQL'
           CREATE SCHEMA lotbot;
@@ -92,14 +120,17 @@ jobs:
           INSERT INTO lotbot.license_events (license_id, kind) SELECT 1 + g % 500, 'activacion' FROM generate_series(1, 2000) g;
           SQL
       - name: Copiar y cifrar
+        if: env.SOLO_COMPROBAR == 'no'
         run: |
           FILE="lotbot-$(date -u +%Y%m%d).sql.gz.enc"
           [ "$ENSAYO" = "no" ] || FILE="ENSAYO-$FILE"
           bash scripts/copia_seguridad.sh copiar "$FILE"
           echo "FILE=$FILE" >> "$GITHUB_ENV"
       - name: Restaurar en una base desechable y comparar
+        if: env.SOLO_COMPROBAR == 'no'
         run: bash scripts/copia_seguridad.sh verificar "$FILE" postgres://prueba:prueba@localhost:5432/restauracion
       - uses: actions/upload-artifact@v4
+        if: env.SOLO_COMPROBAR == 'no'
         with:
           name: ${{ env.FILE }}
           path: ${{ env.FILE }}
