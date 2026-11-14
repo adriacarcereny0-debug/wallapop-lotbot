@@ -35,7 +35,7 @@ desde `claude/funny-ritchie-rokcir`; las ramas nuevas solo crean vistas previas)
 2. **Envío de emails** (Resend, Postmark…): recuperar contraseña sin intervención, recibos y avisos de cobro fallido. Hoy se hace con el «Enlace de contraseña» del admin.
 3. **Certificados de firma** (Windows Authenticode y Apple Developer ID + notarización): sin ellos Windows avisa de «editor desconocido» y en Mac hay que abrir con clic derecho la primera vez. El flujo ya los usa si se ponen los secretos.
 4. **Base de datos propia** para LOT Bot (hoy comparte Neon con el CRM, separada por el esquema `lotbot`).
-5. **Rama por defecto de GitHub**: las tareas programadas (vigilancia y copia de seguridad) solo se ejecutan desde ella; hay que llevar el código allí.
+5. **Rama por defecto de GitHub** (corregido el 14/11): ya es `claude/funny-ritchie-rokcir` y las tareas programadas (vigilancia y copia de seguridad) ya se ejecutan desde ella (comprobado en el historial de GitHub Actions). Si un día se cambia Vercel a `estable`, la rama por defecto de GitHub **no** tiene que cambiar. Ver `docs/dev/integracion-fase-9.md`.
 6. Dependencia indirecta `opentelemetry-api`: el entorno local tenía la 1.45.1 (CVE-2026-126360); las instalaciones nuevas ya traen la 1.45.2 corregida (comprobado en el CI de Windows).
 7. Prueba de navegador real (`tests/test_real_browser_flow.py`): en este contenedor tarda demasiado por la red (pasa igual con el código anterior a los cambios); se ejecuta en Windows y Mac en el CI.
 
