@@ -49,7 +49,7 @@ jobs:
           POSTGRES_DB: restauracion
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U prueba" --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U prueba -d postgres" --health-interval 5s --health-timeout 5s --health-retries 10
       # Solo para el ensayo: origen falso con datos de ejemplo.
       origen:
         image: postgres:18
@@ -59,7 +59,7 @@ jobs:
           POSTGRES_DB: origen
         ports: ["5433:5432"]
         options: >-
-          --health-cmd "pg_isready -U prueba" --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U prueba -d postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       ENSAYO: ${{ inputs.prueba && 'si' || 'no' }}
       BACKUP_DATABASE_URL: ${{ inputs.prueba && 'postgres://prueba:prueba@localhost:5433/origen' || secrets.BACKUP_DATABASE_URL }}

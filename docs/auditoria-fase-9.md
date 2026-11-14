@@ -37,7 +37,7 @@ desde `claude/funny-ritchie-rokcir`; las ramas nuevas solo crean vistas previas)
 4. **Base de datos propia** para LOT Bot (hoy comparte Neon con el CRM, separada por el esquema `lotbot`).
 5. **Rama por defecto de GitHub** (corregido el 14/11): ya es `claude/funny-ritchie-rokcir` y las tareas programadas (vigilancia y copia de seguridad) ya se ejecutan desde ella (comprobado en el historial de GitHub Actions). Si un día se cambia Vercel a `estable`, la rama por defecto de GitHub **no** tiene que cambiar. Ver `docs/dev/integracion-fase-9.md`.
 6. Dependencia indirecta `opentelemetry-api`: el entorno local tenía la 1.45.1 (CVE-2026-126360); las instalaciones nuevas ya traen la 1.45.2 corregida (comprobado en el CI de Windows).
-7. Prueba de navegador real (`tests/test_real_browser_flow.py`): en este contenedor tarda demasiado por la red (pasa igual con el código anterior a los cambios); se ejecuta en Windows y Mac en el CI.
+7. Prueba de navegador real (`tests/test_real_browser_flow.py`, 44 casos). **Corregido el 14/11**: aquí se decía que se ejecuta en el CI de Windows y Mac, y **no es así**: solo se ejecuta si hay un Chromium en `/opt/pw-browsers` o se indica `LOT_BOT_BROWSER_EXECUTABLE`, y en el CI se omite siempre. Tampoco era lenta «por la red»: cada caso tarda ~1 min por las pausas deliberadas del ritmo de publicación (CPU ~10 s). Resultado real en el contenedor: ver `docs/dev/integracion-fase-9.md`. Recomendado: activarla en el CI con el Chrome de los runners.
 
 ## 4. Lo que ya está bien (comprobado, no supuesto)
 
